@@ -28,7 +28,7 @@ resolver = "3"
 # second copy — see the note there.
 tinyjuice-bus = { path = "crates/tinyjuice-bus" }
 async-trait = "0.1"
-dirs = "6"
+dirs = "7"
 hex = "0.4"
 log = "0.4"
 once_cell = "1"
