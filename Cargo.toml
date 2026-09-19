@@ -43,7 +43,7 @@ unicode-segmentation = "1"
 unicode-width = "0.2"
 
 [dependencies.tree-sitter]
-version = "0.26"
+version = "0.27"
 optional = true
 
 [dependencies.tree-sitter-python]
