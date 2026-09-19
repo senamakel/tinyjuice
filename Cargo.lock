@@ -1026,9 +1026,7 @@ dependencies = [
 name = "tinyjuice-module"
 version = "0.2.5"
 dependencies = [
- "serde",
  "serde_json",
- "tempfile",
  "tinybus",
  "tinybus-module",
  "tinyjuice",
