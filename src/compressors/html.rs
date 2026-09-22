@@ -1353,6 +1353,55 @@ mod tests {
     }
 
     #[test]
+    fn markdown_escaping_applies_to_text_nodes_only_and_leaves_emitted_syntax_valid() {
+        // Text-node escaping (push_markdown_text) must never reach the
+        // structural markers the emitters themselves push_str directly:
+        // `[text](href)`, `## Heading`, `- bullet`, and a ``` fence. If
+        // escaping ever migrated onto those call sites, the output would
+        // stop parsing as the Markdown construct it claims to be.
+        let html = concat!(
+            r#"<h2>Section [1] * notes</h2>"#,
+            r#"<p>See <a href="https://example.com/a_b">the [spec] *here*</a> for more.</p>"#,
+            r#"<ul><li>item # one *important*</li><li>item [two]</li></ul>"#,
+            r#"<pre>fn f() { let x = a * b; a[0] = 1; }</pre>"#,
+        );
+        let md = html_to_markdown(html);
+
+        // Heading marker is a literal "## ", not escaped, and the text after
+        // it still carries the escaped metacharacters.
+        assert!(
+            md.contains("## Section \\[1\\] \\* notes"),
+            "heading marker must stay unescaped: {md}"
+        );
+
+        // The link wrapper `[...](...)` is intact — only the link text's
+        // interior metacharacters are escaped, not the brackets/parens the
+        // emitter itself wrote.
+        assert!(
+            md.contains("[the \\[spec\\] \\*here\\*](https://example.com/a_b)"),
+            "link wrapper must stay valid and unescaped: {md}"
+        );
+
+        // List markers are literal "- ", not "\\- ", while item text is
+        // escaped.
+        assert!(
+            md.contains("- item \\# one \\*important\\*"),
+            "list marker must stay unescaped: {md}"
+        );
+        assert!(
+            md.contains("- item \\[two\\]"),
+            "list marker must stay unescaped: {md}"
+        );
+
+        // The fenced block is untouched: no escaping inside `<pre>`, and the
+        // fence delimiters themselves are the literal backtick run.
+        assert!(
+            md.contains("```\nfn f() { let x = a * b; a[0] = 1; }\n```"),
+            "pre content and fence must stay unescaped: {md}"
+        );
+    }
+
+    #[test]
     fn markdown_keeps_literal_comparison_operators_inside_pre() {
         let html = "<pre>if a < b && c > d</pre>";
         assert_eq!(html_to_markdown(html), "```\nif a < b && c > d\n```");
