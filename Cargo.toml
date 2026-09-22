@@ -8,6 +8,7 @@ repository = "https://github.com/tinyhumansai/tinyjuice"
 readme = "README.md"
 keywords = ["llm", "tokens", "compression", "openhuman", "context"]
 categories = ["text-processing"]
+autobins = false
 exclude = [
     ".github/",
     ".gitmodules",
@@ -28,7 +29,7 @@ resolver = "3"
 # second copy — see the note there.
 tinyjuice-bus = { path = "crates/tinyjuice-bus" }
 async-trait = "0.1"
-dirs = "6"
+dirs = "7"
 hex = "0.4"
 log = "0.4"
 once_cell = "1"
@@ -42,7 +43,7 @@ unicode-segmentation = "1"
 unicode-width = "0.2"
 
 [dependencies.tree-sitter]
-version = "0.26"
+version = "0.27"
 optional = true
 
 [dependencies.tree-sitter-python]
@@ -58,9 +59,17 @@ version = "0.23"
 optional = true
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt", "test-util"] }
+
+[[bin]]
+name = "tinyjuice"
+path = "src/bin/tinyjuice.rs"
+
+[[bin]]
+name = "tinyjuice-reduce"
+path = "src/main.rs"
 
 [[bench]]
 name = "compression"
