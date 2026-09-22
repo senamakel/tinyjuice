@@ -1384,8 +1384,10 @@ mod tests {
 
         // List markers are literal "- ", not "\\- ", while item text is
         // escaped.
+        // "#" is only escaped at line start (where it would read as a
+        // heading); mid-line it needs no escaping to stay literal text.
         assert!(
-            md.contains("- item \\# one \\*important\\*"),
+            md.contains("- item # one \\*important\\*"),
             "list marker must stay unescaped: {md}"
         );
         assert!(
