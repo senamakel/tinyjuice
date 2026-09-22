@@ -90,6 +90,11 @@ the original bytes unchanged.
   context, and marks omitted lockfile, generated-bundle, or configured noisy
   hunks with explicit reasons.
 - **HTML compressor** - extracts readable text from rendered markup.
+  `compressors::html::html_to_markdown` is a library entry point beside the
+  pipeline's `html_to_text`: it keeps headings, link targets, list nesting,
+  fenced code and emphasis instead of flattening to prose, for callers (e.g.
+  a `web_fetch` tool) that want the structure a model acts on. Not yet wired
+  into the automatic compression pipeline.
 - **Plain-text ML slot** - optional host-provided callback for learned text
   compression; disabled by default.
 - **Generic command fallback** - line-oriented head/tail reduction for command
