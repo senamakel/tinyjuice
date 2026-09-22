@@ -335,7 +335,6 @@ fn collapse_blank_lines(text: &str) -> String {
     out.trim().to_string()
 }
 
-
 // ---------------------------------------------------------------------------
 // HTML -> Markdown
 // ---------------------------------------------------------------------------
@@ -360,15 +359,39 @@ const MD_DROP_BODY_TAGS: &[&str] = &[
 /// into the paragraph after it. Headings and list items are handled
 /// separately because they also emit a marker.
 const MD_BLOCK_TAGS: &[&str] = &[
-    "address", "article", "aside", "blockquote", "dd", "div", "dl", "dt", "fieldset", "figcaption",
-    "figure", "footer", "header", "hr", "main", "nav", "ol", "p", "section", "table", "tbody",
-    "td", "tfoot", "th", "thead", "tr", "ul",
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "dd",
+    "div",
+    "dl",
+    "dt",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "footer",
+    "header",
+    "hr",
+    "main",
+    "nav",
+    "ol",
+    "p",
+    "section",
+    "table",
+    "tbody",
+    "td",
+    "tfoot",
+    "th",
+    "thead",
+    "tr",
+    "ul",
 ];
 
 /// Inline tags that must not introduce a separator.
 const MD_INLINE_TAGS: &[&str] = &[
-    "a", "b", "i", "em", "strong", "span", "code", "small", "sub", "sup", "abbr", "cite", "q",
-    "u", "s", "mark", "time", "var", "kbd", "samp", "label", "font",
+    "a", "b", "i", "em", "strong", "span", "code", "small", "sub", "sup", "abbr", "cite", "q", "u",
+    "s", "mark", "time", "var", "kbd", "samp", "label", "font",
 ];
 
 /// Upper bound on one extracted link target. A tracking URL can run to
@@ -925,7 +948,10 @@ mod tests {
     fn markdown_drops_an_overlong_tracking_url_rather_than_paying_for_it() {
         let href = format!("https://e.com/?{}", "utm=x&".repeat(100));
         assert!(href.len() > MD_MAX_HREF_CHARS);
-        assert_eq!(html_to_markdown(&format!(r#"<a href="{href}">click</a>"#)), "click");
+        assert_eq!(
+            html_to_markdown(&format!(r#"<a href="{href}">click</a>"#)),
+            "click"
+        );
     }
 
     #[test]
@@ -999,7 +1025,9 @@ mod tests {
         // machinery must come out near the size of its prose.
         let mut html = String::from("<html><head>");
         for i in 0..200 {
-            html.push_str(&format!("<script>function f{i}(){{return {i}*2;}}</script>"));
+            html.push_str(&format!(
+                "<script>function f{i}(){{return {i}*2;}}</script>"
+            ));
         }
         html.push_str("</head><body>");
         for _ in 0..10 {
