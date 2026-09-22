@@ -410,26 +410,47 @@ pub fn html_to_markdown(html: &str) -> String {
     let mut out = String::with_capacity(html.len() / 4);
     let mut i = 0usize;
     let mut skip_until: Option<&'static str> = None;
+    // Depth of same-tag nesting inside a dropped body, e.g. a `<template>`
+    // nested inside another dropped `<template>`. The first matching close
+    // tag only ends skipping once every nested opener has been accounted
+    // for; otherwise inner content past that close tag leaks as text.
+    let mut skip_depth = 0usize;
     let mut cdata_depth = 0usize;
     // Open `<a>` elements: where their text began in `out`, and the href to
     // wrap it with on close.
     let mut links: Vec<(usize, String)> = Vec::new();
     let mut list_depth = 0usize;
-    // Inside `<pre>` whitespace is content, so the normalizer must leave it
-    // alone and inline markers must not fire.
+    // Inside `<pre>` whitespace and markup are content, so it is buffered
+    // separately: literal `<`/`>` survive, nested highlighting tags are
+    // dropped, and the fence length is only chosen once the whole body is
+    // known (it must exceed the longest backtick run inside it).
     let mut pre_depth = 0usize;
+    let mut pre_buffer = String::new();
+    // Currently open `<b>/<strong>/<i>/<em>/<code>` markers: which marker
+    // and where in `out` it was opened, so a close tag can undo exactly the
+    // marker it opened rather than guessing from whatever `out` currently
+    // ends with (that guess breaks on nested same-type emphasis and on
+    // literal marker text in the content, see `md_close_emphasis`).
+    let mut emphasis: Vec<(&'static str, usize)> = Vec::new();
 
     while i < bytes.len() {
         if bytes[i] == b'<' {
             if let Some(skip_tag) = skip_until {
-                // Inside a dropped body only the matching close tag is
-                // markup; a lone `<` in inline JS or CSS is body text.
-                if html[i + 1..].starts_with('/')
-                    && let Some(rel_end) = html[i..].find('>')
-                {
+                // Inside a dropped body only a tag matching the dropped name
+                // is markup; a lone `<` in inline JS or CSS is body text.
+                if let Some(rel_end) = find_tag_end(html, i) {
                     let (name, is_close) = parse_tag_name(&html[i + 1..i + rel_end]);
-                    if is_close && name == skip_tag {
-                        skip_until = None;
+                    if name == skip_tag {
+                        let self_closing = html[i + 1..i + rel_end].trim_end().ends_with('/');
+                        if is_close {
+                            if skip_depth == 0 {
+                                skip_until = None;
+                            } else {
+                                skip_depth -= 1;
+                            }
+                        } else if !self_closing {
+                            skip_depth += 1;
+                        }
                         i += rel_end + 1;
                         continue;
                     }
@@ -451,6 +472,23 @@ pub fn html_to_markdown(html: &str) -> String {
                 i += "<![CDATA[".len();
                 continue;
             }
+            // A `<` not followed by a name/`/`/`!`/`?` start is not a tag
+            // opener (e.g. a bare comparison inside `<pre>` text); treat it
+            // as a literal character instead of hunting for the next `>`,
+            // which would otherwise swallow unrelated content up to it.
+            let looks_like_tag = matches!(
+                html[i + 1..].chars().next(),
+                Some(c) if c.is_ascii_alphabetic() || c == '/' || c == '!' || c == '?'
+            );
+            if !looks_like_tag {
+                if pre_depth > 0 {
+                    pre_buffer.push('<');
+                } else {
+                    out.push('<');
+                }
+                i += 1;
+                continue;
+            }
             let Some(rel_end) = find_tag_end(html, i) else {
                 break;
             };
@@ -458,8 +496,39 @@ pub fn html_to_markdown(html: &str) -> String {
             let (name, is_close) = parse_tag_name(tag_raw);
             let self_closing = tag_raw.trim_end().ends_with('/');
 
+            // `embed` has no closing tag in real markup (it is a void
+            // element); treating it like the other drop-body tags would arm
+            // `skip_until` until EOF and silently discard everything after
+            // it. Skip only the tag itself.
+            if !is_close && name == "embed" {
+                i += rel_end + 1;
+                continue;
+            }
+
             if !is_close && !self_closing && MD_DROP_BODY_TAGS.contains(&name.as_str()) {
                 skip_until = Some(md_static_tag(&name));
+                skip_depth = 0;
+                i += rel_end + 1;
+                continue;
+            }
+
+            if name == "pre" {
+                if is_close {
+                    if pre_depth > 0 {
+                        pre_depth -= 1;
+                        if pre_depth == 0 {
+                            flush_pre_block(&mut out, &mut pre_buffer);
+                        }
+                    }
+                } else if !self_closing {
+                    pre_depth += 1;
+                }
+                i += rel_end + 1;
+                continue;
+            }
+            if pre_depth > 0 {
+                // Inside a fenced block every other tag is noise: `<span>`
+                // syntax highlighting must not become Markdown.
                 i += rel_end + 1;
                 continue;
             }
@@ -471,7 +540,7 @@ pub fn html_to_markdown(html: &str) -> String {
                 is_close,
                 &mut links,
                 &mut list_depth,
-                &mut pre_depth,
+                &mut emphasis,
             );
             i += rel_end + 1;
             continue;
@@ -489,16 +558,85 @@ pub fn html_to_markdown(html: &str) -> String {
         if bytes[i] == b'&'
             && let Some((decoded, consumed)) = decode_entity(&html[i..])
         {
-            out.push_str(&decoded);
+            if pre_depth > 0 {
+                pre_buffer.push_str(&decoded);
+            } else {
+                push_markdown_text(&mut out, &decoded);
+            }
             i += consumed;
             continue;
         }
         let ch = html[i..].chars().next().unwrap();
-        out.push(ch);
+        if pre_depth > 0 {
+            pre_buffer.push(ch);
+        } else {
+            push_markdown_text_char(&mut out, ch);
+        }
         i += ch.len_utf8();
     }
 
+    // Unterminated `<pre>`: still emit whatever was captured instead of
+    // silently dropping it, matching this module's tolerance elsewhere for
+    // malformed/truncated input.
+    if pre_depth > 0 && !pre_buffer.is_empty() {
+        flush_pre_block(&mut out, &mut pre_buffer);
+    }
+
     collapse_markdown(&out)
+}
+
+/// Emit a buffered `<pre>` body as a fenced block, choosing a fence longer
+/// than any backtick run the body itself contains so embedded ``` content
+/// (a documentation example, say) can't prematurely close the block.
+fn flush_pre_block(out: &mut String, pre_buffer: &mut String) {
+    let fence_len = longest_backtick_run(pre_buffer).max(2) + 1;
+    let fence = "`".repeat(fence_len);
+    md_break(out);
+    out.push_str(&fence);
+    out.push('\n');
+    out.push_str(pre_buffer.trim_end_matches('\n'));
+    out.push('\n');
+    out.push_str(&fence);
+    out.push('\n');
+    pre_buffer.clear();
+}
+
+fn longest_backtick_run(s: &str) -> usize {
+    let mut max_run = 0usize;
+    let mut run = 0usize;
+    for b in s.bytes() {
+        if b == b'`' {
+            run += 1;
+            max_run = max_run.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    max_run
+}
+
+/// Push a literal HTML text-node character into Markdown output, escaping
+/// characters that would otherwise be read as Markdown syntax the source
+/// document never intended: ordinary page text like "# Title" or
+/// "[not a link]" must not turn into a heading or a link just because it
+/// passed through the converter. Never called for `<pre>` content, which is
+/// pushed to `pre_buffer` verbatim (escaping code would corrupt it), or for
+/// the markers this module emits itself (those go through direct
+/// `push_str` calls, not this function).
+fn push_markdown_text_char(out: &mut String, ch: char) {
+    let at_line_start = out.is_empty() || out.ends_with('\n');
+    let needs_escape = matches!(ch, '\\' | '`' | '*' | '_' | '[' | ']')
+        || (at_line_start && matches!(ch, '#' | '-' | '+' | '>'));
+    if needs_escape {
+        out.push('\\');
+    }
+    out.push(ch);
+}
+
+fn push_markdown_text(out: &mut String, s: &str) {
+    for ch in s.chars() {
+        push_markdown_text_char(out, ch);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -509,25 +647,9 @@ fn emit_markdown_tag(
     is_close: bool,
     links: &mut Vec<(usize, String)>,
     list_depth: &mut usize,
-    pre_depth: &mut usize,
+    emphasis: &mut Vec<(&'static str, usize)>,
 ) {
-    // Inside a fenced block every tag but `</pre>` is noise: `<span>`
-    // syntax highlighting must not become Markdown.
-    if *pre_depth > 0 && !(is_close && name == "pre") {
-        return;
-    }
-
     match name {
-        "pre" => {
-            if is_close {
-                *pre_depth = pre_depth.saturating_sub(1);
-                out.push_str("\n```");
-            } else {
-                *pre_depth += 1;
-                md_break(out);
-                out.push_str("```\n");
-            }
-        }
         "br" => out.push('\n'),
         "title" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
             md_break(out);
@@ -555,9 +677,9 @@ fn emit_markdown_tag(
                 out.push_str("- ");
             }
         }
-        "b" | "strong" => md_emphasis(out, "**"),
-        "i" | "em" => md_emphasis(out, "*"),
-        "code" => md_emphasis(out, "`"),
+        "b" | "strong" => md_toggle_emphasis(out, emphasis, is_close, "**"),
+        "i" | "em" => md_toggle_emphasis(out, emphasis, is_close, "*"),
+        "code" => md_toggle_emphasis(out, emphasis, is_close, "`"),
         "a" => {
             if is_close {
                 md_close_link(out, links);
@@ -570,11 +692,21 @@ fn emit_markdown_tag(
                 // Caption yes, source no: an `img` src is either a URL the
                 // model can't read or a multi-KB base64 blob.
                 out.push_str("[IMAGE: ");
-                out.push_str(alt.trim());
+                push_markdown_text(out, alt.trim());
                 out.push(']');
             }
         }
-        other if MD_BLOCK_TAGS.contains(&other) => md_break(out),
+        other if MD_BLOCK_TAGS.contains(&other) => {
+            // A block boundary right after a still-pending list marker (no
+            // text emitted between "- " and this tag) must not push the
+            // marker onto its own line, or the marker-only line then reads
+            // as leftover markup and gets dropped by `collapse_markdown`,
+            // silently losing the bullet. `<li><p>one</p></li>` must stay
+            // `- one`.
+            if !out.ends_with("- ") {
+                md_break(out);
+            }
+        }
         other if MD_INLINE_TAGS.contains(&other) => {}
         _ => {
             // Unrecognised tag: separate sibling element values (RSS
@@ -586,14 +718,40 @@ fn emit_markdown_tag(
     }
 }
 
-/// Emphasis markers are only worth emitting around real text; an empty
-/// `<b></b>` would otherwise leave `****` behind.
-fn md_emphasis(out: &mut String, marker: &str) {
-    if out.ends_with(marker) {
-        out.truncate(out.len() - marker.len());
-        return;
+/// Open or close one emphasis marker, tracking the stack of currently-open
+/// markers rather than inferring direction from whatever `out` ends with.
+/// The previous suffix-based approach broke both on nested same-type
+/// emphasis (`<strong>outer <strong>inner</strong></strong>` — the outer
+/// close saw the inner close's own marker and deleted it) and on literal
+/// marker text in content (`<strong>foo**</strong>` truncated the literal
+/// `**` instead of the marker). `push_markdown_text_char` already escapes
+/// literal marker characters in text nodes, so `out` only ever ends with a
+/// marker when this function put it there.
+fn md_toggle_emphasis(
+    out: &mut String,
+    emphasis: &mut Vec<(&'static str, usize)>,
+    is_close: bool,
+    marker: &'static str,
+) {
+    if is_close {
+        let Some(pos) = emphasis.iter().rposition(|(m, _)| *m == marker) else {
+            return;
+        };
+        let (_, start) = emphasis.remove(pos);
+        if start > out.len() {
+            return;
+        }
+        // An empty element (`<b></b>`, or one whose only content was itself
+        // dropped) would otherwise leave a stray `**` behind.
+        if out.len() == start + marker.len() && &out[start..] == marker {
+            out.truncate(start);
+        } else {
+            out.push_str(marker);
+        }
+    } else {
+        emphasis.push((marker, out.len()));
+        out.push_str(marker);
     }
-    out.push_str(marker);
 }
 
 fn md_break(out: &mut String) {
@@ -609,18 +767,29 @@ fn md_close_link(out: &mut String, links: &mut Vec<(usize, String)>) {
     if start > out.len() {
         return;
     }
-    let text = out[start..].trim().to_string();
+    let raw = out[start..].to_string();
+    let text = raw.trim();
     // A link with no text, or one pointing at a fragment or a script
     // handler, is navigation chrome: keep the words, drop the wrapper.
     if text.is_empty() || !md_useful_href(&href) {
         return;
     }
+    // Whitespace separating the link from adjacent text belongs outside the
+    // wrapper, or `<p>Hello<a> world </a>again</p>` loses the separation
+    // and renders as `Helloworldagain`.
+    let leading_len = raw.len() - raw.trim_start().len();
+    let trailing_len = raw.len() - raw.trim_end().len();
+    let leading = raw[..leading_len].to_string();
+    let trailing = raw[raw.len() - trailing_len..].to_string();
+    let text = text.to_string();
     out.truncate(start);
+    out.push_str(&leading);
     out.push('[');
     out.push_str(&text);
     out.push_str("](");
-    out.push_str(&href);
+    out.push_str(&md_format_href(&href));
     out.push(')');
+    out.push_str(&trailing);
 }
 
 fn md_useful_href(href: &str) -> bool {
@@ -630,6 +799,94 @@ fn md_useful_href(href: &str) -> bool {
     }
     let lower = h.to_ascii_lowercase();
     !(lower.starts_with("javascript:") || lower.starts_with("data:"))
+}
+
+/// Query-parameter names commonly used to carry a bearer credential rather
+/// than a resource identifier. Redacted before a link target reaches the
+/// output, matching this crate's existing policy of never putting a full
+/// URL with its query string into anything a model, log, or cache can see
+/// (`web_extract::source_host` keeps only the host for the same reason).
+const MD_SENSITIVE_QUERY_PARAMS: &[&str] = &[
+    "token",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "auth",
+    "authorization",
+    "session",
+    "sessionid",
+    "session_id",
+    "sid",
+    "api_key",
+    "apikey",
+    "key",
+    "secret",
+    "client_secret",
+    "password",
+    "passwd",
+    "pwd",
+    "credential",
+    "signature",
+    "sig",
+    "jwt",
+];
+
+/// Redact the value of any sensitive query parameter in `href`. Structure
+/// (host, path, non-sensitive params, fragment) is kept so the target is
+/// still meaningfully a "somewhere to go next" for the model, but a
+/// `?token=...`/`?session=...` value never reaches the output.
+fn md_redact_href(href: &str) -> std::borrow::Cow<'_, str> {
+    let Some(q_pos) = href.find('?') else {
+        return href.into();
+    };
+    let (base, rest) = href.split_at(q_pos);
+    let rest = &rest[1..];
+    let (query, fragment) = match rest.find('#') {
+        Some(h) => (&rest[..h], &rest[h..]),
+        None => (rest, ""),
+    };
+    let mut changed = false;
+    let redacted: Vec<String> = query
+        .split('&')
+        .map(|pair| {
+            let mut parts = pair.splitn(2, '=');
+            let key = parts.next().unwrap_or("");
+            if parts.next().is_none() {
+                return pair.to_string();
+            }
+            let sensitive = MD_SENSITIVE_QUERY_PARAMS
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(key));
+            if sensitive {
+                changed = true;
+                format!("{key}=REDACTED")
+            } else {
+                pair.to_string()
+            }
+        })
+        .collect();
+    if !changed {
+        return href.into();
+    }
+    let mut out = String::with_capacity(href.len());
+    out.push_str(base);
+    out.push('?');
+    out.push_str(&redacted.join("&"));
+    out.push_str(fragment);
+    out.into()
+}
+
+/// Redact secrets from a link target, then guard against the destination
+/// itself breaking the `(...)` it is about to sit inside: a target
+/// containing a literal space or parenthesis is wrapped in angle brackets,
+/// which Markdown treats as an unambiguous destination delimiter.
+fn md_format_href(href: &str) -> String {
+    let redacted = md_redact_href(href);
+    if redacted.contains(' ') || redacted.contains('(') || redacted.contains(')') {
+        format!("<{redacted}>")
+    } else {
+        redacted.into_owned()
+    }
 }
 
 /// Return the `'static` slice matching a recognised Markdown drop-body tag.
@@ -692,19 +949,31 @@ fn decode_all_entities(raw: &str) -> String {
 fn collapse_markdown(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut blanks = 0usize;
-    let mut in_fence = false;
+    // The exact fence text (e.g. "```" or "````") that opened the current
+    // fenced block, not just "starts with 3 backticks": a `<pre>` body can
+    // itself contain a line of bare backticks (a documentation example
+    // showing a fenced block), and only a line matching the real fence
+    // exactly may close it. `flush_pre_block` already chose that fence to
+    // be longer than anything in the body, so an embedded bare-backtick
+    // line can never collide with it.
+    let mut fence_marker: Option<String> = None;
 
     for line in text.lines() {
-        if line.trim_start().starts_with("```") {
-            in_fence = !in_fence;
+        let trimmed = line.trim();
+        if let Some(marker) = &fence_marker {
+            out.push_str(line.trim_end());
+            out.push('\n');
+            if trimmed == marker {
+                fence_marker = None;
+                blanks = 0;
+            }
+            continue;
+        }
+        if trimmed.len() >= 3 && trimmed.chars().all(|c| c == '`') {
+            fence_marker = Some(trimmed.to_string());
             out.push_str(line.trim_end());
             out.push('\n');
             blanks = 0;
-            continue;
-        }
-        if in_fence {
-            out.push_str(line.trim_end());
-            out.push('\n');
             continue;
         }
 
@@ -1044,6 +1313,156 @@ mod tests {
         );
         assert!(md.contains("Real sentence of prose."));
         assert!(!md.contains("return"));
+    }
+
+    #[test]
+    fn markdown_treats_embed_as_a_void_element() {
+        // `embed` has no closing tag in real HTML. Treating it like the
+        // other drop-body tags arms skip-until-EOF and silently discards
+        // everything after it.
+        let html = r#"<embed src="movie.mp4"><h1>Details</h1><p>Body text.</p>"#;
+        let md = html_to_markdown(html);
+        assert!(md.contains("# Details"), "{md}");
+        assert!(md.contains("Body text."), "{md}");
+    }
+
+    #[test]
+    fn markdown_tracks_nesting_depth_of_dropped_elements() {
+        let html = "<template><template>inner</template>secret</template><p>after</p>";
+        let md = html_to_markdown(html);
+        assert!(!md.contains("secret"), "{md}");
+        assert!(!md.contains("inner"), "{md}");
+        assert!(md.contains("after"), "{md}");
+    }
+
+    #[test]
+    fn markdown_escapes_markdown_syntax_in_text_nodes() {
+        let html = "<p># This is paragraph text</p><p>- not a list item</p>\
+            <p>See [internal](https://example.com) reference and a_var*b*c and `code`.</p>";
+        let md = html_to_markdown(html);
+        assert!(md.contains("\\# This is paragraph text"), "{md}");
+        assert!(md.contains("\\- not a list item"), "{md}");
+        assert!(
+            md.contains("See \\[internal\\](https://example.com) reference"),
+            "{md}"
+        );
+        assert!(md.contains("a\\_var\\*b\\*c and \\`code\\`."), "{md}");
+        // Structural markers this module emits itself are untouched.
+        let md = html_to_markdown("<h1>Title</h1><ul><li>item</li></ul>");
+        assert_eq!(md, "# Title\n- item");
+    }
+
+    #[test]
+    fn markdown_escaping_applies_to_text_nodes_only_and_leaves_emitted_syntax_valid() {
+        // Text-node escaping (push_markdown_text) must never reach the
+        // structural markers the emitters themselves push_str directly:
+        // `[text](href)`, `## Heading`, `- bullet`, and a ``` fence. If
+        // escaping ever migrated onto those call sites, the output would
+        // stop parsing as the Markdown construct it claims to be.
+        let html = concat!(
+            r#"<h2>Section [1] * notes</h2>"#,
+            r#"<p>See <a href="https://example.com/a_b">the [spec] *here*</a> for more.</p>"#,
+            r#"<ul><li>item # one *important*</li><li>item [two]</li></ul>"#,
+            r#"<pre>fn f() { let x = a * b; a[0] = 1; }</pre>"#,
+        );
+        let md = html_to_markdown(html);
+
+        // Heading marker is a literal "## ", not escaped, and the text after
+        // it still carries the escaped metacharacters.
+        assert!(
+            md.contains("## Section \\[1\\] \\* notes"),
+            "heading marker must stay unescaped: {md}"
+        );
+
+        // The link wrapper `[...](...)` is intact — only the link text's
+        // interior metacharacters are escaped, not the brackets/parens the
+        // emitter itself wrote.
+        assert!(
+            md.contains("[the \\[spec\\] \\*here\\*](https://example.com/a_b)"),
+            "link wrapper must stay valid and unescaped: {md}"
+        );
+
+        // List markers are literal "- ", not "\\- ", while item text is
+        // escaped.
+        // "#" is only escaped at line start (where it would read as a
+        // heading); mid-line it needs no escaping to stay literal text.
+        assert!(
+            md.contains("- item # one \\*important\\*"),
+            "list marker must stay unescaped: {md}"
+        );
+        assert!(
+            md.contains("- item \\[two\\]"),
+            "list marker must stay unescaped: {md}"
+        );
+
+        // The fenced block is untouched: no escaping inside `<pre>`, and the
+        // fence delimiters themselves are the literal backtick run.
+        assert!(
+            md.contains("```\nfn f() { let x = a * b; a[0] = 1; }\n```"),
+            "pre content and fence must stay unescaped: {md}"
+        );
+    }
+
+    #[test]
+    fn markdown_keeps_literal_comparison_operators_inside_pre() {
+        let html = "<pre>if a < b && c > d</pre>";
+        assert_eq!(html_to_markdown(html), "```\nif a < b && c > d\n```");
+    }
+
+    #[test]
+    fn markdown_selects_a_fence_longer_than_embedded_backtick_runs() {
+        let html = "<pre>```\nhello\n```</pre>";
+        let md = html_to_markdown(html);
+        assert_eq!(md, "````\n```\nhello\n```\n````");
+    }
+
+    #[test]
+    fn markdown_terminates_the_closing_fence_with_a_newline() {
+        let html = "<pre>x</pre>tail";
+        let md = html_to_markdown(html);
+        assert_eq!(md, "```\nx\n```\ntail");
+    }
+
+    #[test]
+    fn markdown_keeps_a_list_marker_when_the_item_wraps_a_block_child() {
+        let html = "<ul><li><p>one</p></li></ul>";
+        assert_eq!(html_to_markdown(html), "- one");
+    }
+
+    #[test]
+    fn markdown_handles_nested_emphasis_of_the_same_type() {
+        let html = "<strong>outer <strong>inner</strong></strong>";
+        assert_eq!(html_to_markdown(html), "**outer **inner****");
+    }
+
+    #[test]
+    fn markdown_preserves_literal_marker_text_when_closing_emphasis() {
+        let html = "<strong>foo**</strong>";
+        assert_eq!(html_to_markdown(html), "**foo\\*\\***");
+    }
+
+    #[test]
+    fn markdown_keeps_link_edge_whitespace_outside_the_wrapper() {
+        let html = r#"<p>Hello<a href="/x"> world </a>again</p>"#;
+        assert_eq!(html_to_markdown(html), "Hello [world](/x) again");
+    }
+
+    #[test]
+    fn markdown_redacts_secrets_from_link_targets() {
+        let html =
+            r#"<a href="https://example.test/reset?token=secret&session=private&page=2">click</a>"#;
+        let md = html_to_markdown(html);
+        assert!(!md.contains("secret"), "{md}");
+        assert!(!md.contains("private"), "{md}");
+        assert!(md.contains("token=REDACTED"), "{md}");
+        assert!(md.contains("session=REDACTED"), "{md}");
+        assert!(md.contains("page=2"), "non-sensitive params survive: {md}");
+    }
+
+    #[test]
+    fn markdown_wraps_link_destinations_with_spaces_or_parens_in_angle_brackets() {
+        let html = r#"<a href="/a path (final)">click</a>"#;
+        assert_eq!(html_to_markdown(html), "[click](</a path (final)>)");
     }
 
     #[test]
