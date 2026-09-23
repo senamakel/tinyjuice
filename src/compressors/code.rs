@@ -199,12 +199,12 @@ pub fn compress_heuristic(content: &str) -> Option<CompressOutput> {
 /// this path.
 pub fn stub_code(
     content: &str,
-    extension: Option<&str>,
+    _extension: Option<&str>,
     mode: &StubMode,
     max_bytes: usize,
 ) -> CodeStubOutput {
     #[cfg(feature = "tinyjuice-treesitter")]
-    if let Some(ext) = extension
+    if let Some(ext) = _extension
         && let Some(out) = treesitter::stub(content, ext, mode)
     {
         return enforce_stub_budget(out, max_bytes);
@@ -213,6 +213,7 @@ pub fn stub_code(
     enforce_stub_budget(stub_heuristic(content, mode), max_bytes)
 }
 
+#[cfg(feature = "tinyjuice-treesitter")]
 #[derive(Debug, Clone)]
 struct StubBody {
     declaration_start: usize,
@@ -223,6 +224,7 @@ struct StubBody {
     symbol: SymbolSummary,
 }
 
+#[cfg(feature = "tinyjuice-treesitter")]
 fn should_expand_body(mode: &StubMode, body: &StubBody) -> bool {
     match mode {
         StubMode::SignaturesOnly | StubMode::PublicApi => false,
@@ -237,6 +239,7 @@ fn should_expand_body(mode: &StubMode, body: &StubBody) -> bool {
     }
 }
 
+#[cfg(feature = "tinyjuice-treesitter")]
 fn placeholder_for_body(content: &str, body: &StubBody) -> String {
     let body_text = &content[body.body_start..body.body_end];
     let lines = body.body_range.end.saturating_sub(body.body_range.start) + 1;
@@ -253,6 +256,7 @@ fn placeholder_for_body(content: &str, body: &StubBody) -> String {
     }
 }
 
+#[cfg(feature = "tinyjuice-treesitter")]
 fn build_stub_from_bodies(
     content: &str,
     bodies: Vec<StubBody>,
@@ -576,6 +580,7 @@ fn is_public_signature(signature: &str) -> bool {
         || trimmed.starts_with("public ")
 }
 
+#[cfg(feature = "tinyjuice-treesitter")]
 fn line_starts(content: &str) -> Vec<usize> {
     let mut starts = vec![0usize];
     for (idx, byte) in content.bytes().enumerate() {
@@ -586,6 +591,7 @@ fn line_starts(content: &str) -> Vec<usize> {
     starts
 }
 
+#[cfg(feature = "tinyjuice-treesitter")]
 fn byte_to_line(starts: &[usize], byte: usize) -> usize {
     starts.partition_point(|start| *start <= byte).max(1)
 }
