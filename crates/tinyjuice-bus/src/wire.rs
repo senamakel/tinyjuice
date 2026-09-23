@@ -36,7 +36,9 @@ pub struct CompactRequest {
     pub content: String,
     /// The agent-level tool name.
     pub tool_name: String,
-    /// Host kill-switch; `false` returns `content` untouched.
+    /// Whether the content router runs. `false` returns `content` untouched
+    /// unless the summary stage (gated by `llm_summary_enabled` and a
+    /// `context_token`) writes a summary.
     #[serde(default = "enabled_by_default")]
     pub enabled: bool,
     /// The agent's compaction profile.

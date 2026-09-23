@@ -139,6 +139,7 @@ pub async fn compact_tool_output_with_policy(
         output,
         exit_code,
         profile,
+        compaction_enabled: true,
         focus: None,
         context_token: None,
         scope: None,
@@ -157,6 +158,10 @@ pub struct ToolOutputCall<'a> {
     pub output: &'a str,
     pub exit_code: Option<i32>,
     pub profile: AgentTokenjuiceCompression,
+    /// Whether the content router runs. `false` still allows the summary
+    /// stage: a host can want a model-written summary of an oversized result
+    /// without opting its agents into deterministic compaction.
+    pub compaction_enabled: bool,
     /// What the caller said it needs from this result.
     pub focus: Option<&'a str>,
     /// Handed back to the host's `Generate`; `None` skips the summary stage.
@@ -188,6 +193,7 @@ pub async fn compact_tool_output(call: ToolOutputCall<'_>) -> ToolOutputReport {
         output,
         exit_code,
         profile,
+        compaction_enabled,
         focus,
         context_token,
         scope,
@@ -269,6 +275,20 @@ pub async fn compact_tool_output(call: ToolOutputCall<'_>) -> ToolOutputReport {
                 notice = Some(reason.notice());
             }
         }
+    }
+
+    if !compaction_enabled {
+        return ToolOutputReport {
+            text: output.to_string(),
+            stats: CompactionStats {
+                tool_name: tool_name.to_string(),
+                original_bytes,
+                compacted_bytes: original_bytes,
+                rule_id: "none/disabled".to_string(),
+                applied: false,
+            },
+            notice,
+        };
     }
 
     let (command, argv) = extract_command_argv(arguments);
@@ -611,6 +631,7 @@ mod tests {
             output,
             exit_code: None,
             profile,
+            compaction_enabled: true,
             focus,
             context_token: Some("turn-7"),
             scope: Some("tool-integration"),
@@ -682,5 +703,31 @@ mod tests {
             Some(crate::summarize::UnavailableReason::Failed.notice())
         );
         crate::llm::configure_callback(None);
+    }
+
+    #[tokio::test]
+    async fn a_summary_runs_even_with_compaction_disabled() {
+        let _guard = crate::llm::callback_test_guard().await;
+        enable_llm_summary();
+        crate::llm::configure_callback(Some(std::sync::Arc::new(|_| {
+            Box::pin(async { Ok(Some("note".to_string())) })
+        })));
+        let output = "integration compaction disabled ".repeat(60);
+        let report = compact_tool_output(ToolOutputCall {
+            compaction_enabled: false,
+            ..call(&output, AgentTokenjuiceCompression::Full, None)
+        })
+        .await;
+        assert_eq!(report.stats.rule_id, "llm_summary");
+
+        crate::llm::configure_callback(None);
+        let report = compact_tool_output(ToolOutputCall {
+            compaction_enabled: false,
+            scope: Some("tool-integration-disabled"),
+            ..call(&output, AgentTokenjuiceCompression::Full, None)
+        })
+        .await;
+        assert_eq!(report.stats.rule_id, "none/disabled");
+        assert_eq!(report.text, output);
     }
 }

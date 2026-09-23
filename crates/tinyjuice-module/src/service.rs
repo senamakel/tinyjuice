@@ -98,7 +98,9 @@ impl Compression {
 }
 
 /// `Compact` and `CompactWith` share one body; the positional form is
-/// `CompactWith` with no arguments, focus or context.
+/// `CompactWith` with no arguments, focus or context. `enabled = false` turns
+/// the content router off but not the summary stage, which is gated by its
+/// own option and a context token.
 async fn compact_request(request: CompactRequest) -> CompactResponse {
     let CompactRequest {
         content,
@@ -110,22 +112,6 @@ async fn compact_request(request: CompactRequest) -> CompactResponse {
         context_token,
         scope,
     } = request;
-    if !enabled {
-        let bytes = content.len();
-        let tokens = tinyjuice::tokens::estimate_tokens(&content);
-        return CompactResponse {
-            text: content,
-            original_bytes: bytes,
-            compacted_bytes: bytes,
-            rule_id: "none/disabled".to_string(),
-            applied: false,
-            content_kind: "plain_text".to_string(),
-            compressor: "none".to_string(),
-            original_tokens: tokens,
-            compacted_tokens: tokens,
-            notice: None,
-        };
-    }
     let original_tokens = tinyjuice::tokens::estimate_tokens(&content);
     let report = tinyjuice::tool_integration::compact_tool_output(ToolOutputCall {
         tool_name: &tool_name,
@@ -133,6 +119,7 @@ async fn compact_request(request: CompactRequest) -> CompactResponse {
         output: &content,
         exit_code: None,
         profile,
+        compaction_enabled: enabled,
         focus: focus.as_deref(),
         context_token: context_token.as_deref(),
         scope: scope.as_deref(),
