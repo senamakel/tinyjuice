@@ -589,4 +589,99 @@ mod tests {
             Some("foo bar")
         );
     }
+
+    /// Turn the summary stage on in the global options. Safe alongside the
+    /// other tests here: none of them passes a context token, so the stage
+    /// still declines for them.
+    fn enable_llm_summary() {
+        let mut opts = current_options();
+        opts.llm_summary_enabled = true;
+        opts.llm_summary_threshold_tokens = 10;
+        configure(opts);
+    }
+
+    fn call<'a>(
+        output: &'a str,
+        profile: AgentTokenjuiceCompression,
+        focus: Option<&'a str>,
+    ) -> ToolOutputCall<'a> {
+        ToolOutputCall {
+            tool_name: "web_fetch",
+            arguments: None,
+            output,
+            exit_code: None,
+            profile,
+            focus,
+            context_token: Some("turn-7"),
+            scope: Some("tool-integration"),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_full_profile_summarizes_with_the_callers_focus() {
+        let _guard = crate::llm::callback_test_guard().await;
+        enable_llm_summary();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let sink = seen.clone();
+        crate::llm::configure_callback(Some(std::sync::Arc::new(
+            move |request: crate::llm::GenerateRequest| {
+                sink.lock().unwrap().push(request.prompt);
+                Box::pin(async { Ok(Some("focused note".to_string())) })
+            },
+        )));
+
+        let output = "integration full profile ".repeat(60);
+        let report = compact_tool_output(call(
+            &output,
+            AgentTokenjuiceCompression::Full,
+            Some("the rate limits"),
+        ))
+        .await;
+        assert!(report.text.starts_with("focused note"));
+        assert_eq!(report.stats.rule_id, "llm_summary");
+        assert!(report.stats.applied);
+        assert!(report.notice.is_none());
+        assert!(seen.lock().unwrap()[0].contains("Caller focus: the rate limits"));
+        crate::llm::configure_callback(None);
+    }
+
+    #[tokio::test]
+    async fn the_light_profile_never_summarizes() {
+        let _guard = crate::llm::callback_test_guard().await;
+        enable_llm_summary();
+        crate::llm::configure_callback(Some(std::sync::Arc::new(|_| {
+            Box::pin(async { panic!("light must not reach the model") })
+        })));
+        let output = "integration light profile ".repeat(60);
+        let report = compact_tool_output(call(
+            &output,
+            AgentTokenjuiceCompression::Light,
+            Some("anything"),
+        ))
+        .await;
+        assert_ne!(report.stats.rule_id, "llm_summary");
+        crate::llm::configure_callback(None);
+    }
+
+    #[tokio::test]
+    async fn a_failed_summary_falls_through_with_a_notice() {
+        let _guard = crate::llm::callback_test_guard().await;
+        enable_llm_summary();
+        crate::llm::configure_callback(Some(std::sync::Arc::new(|_| {
+            Box::pin(async { Err("offline".to_string()) })
+        })));
+        let output = "integration failed summary ".repeat(60);
+        let report = compact_tool_output(ToolOutputCall {
+            scope: Some("tool-integration-failure"),
+            ..call(&output, AgentTokenjuiceCompression::Full, None)
+        })
+        .await;
+        assert_ne!(report.stats.rule_id, "llm_summary");
+        assert_eq!(
+            report.notice,
+            Some(crate::summarize::UnavailableReason::Failed.notice())
+        );
+        crate::llm::configure_callback(None);
+    }
+
 }
