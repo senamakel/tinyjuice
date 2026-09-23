@@ -97,8 +97,11 @@ async fn a_summary_replaces_the_payload_and_keeps_the_original_recoverable() {
     let _guard = llm::callback_test_guard().await;
     let seen = recording(Ok(Some("  the gist  ".into())));
     let raw = payload("summarized");
-    let outcome =
-        maybe_summarize(input(&raw, Some("the install steps"), "summarized"), &opts()).await;
+    let outcome = maybe_summarize(
+        input(&raw, Some("the install steps"), "summarized"),
+        &opts(),
+    )
+    .await;
     let SummaryOutcome::Summarized {
         text,
         original_bytes,
@@ -113,14 +116,21 @@ async fn a_summary_replaces_the_payload_and_keeps_the_original_recoverable() {
     assert_eq!(summary_bytes, "the gist".len());
     let token = ccr_token.expect("the original should be offloaded");
     assert!(text.contains(&token), "the footer names the token");
-    assert_eq!(crate::cache::retrieve(&token).as_deref(), Some(raw.as_str()));
+    assert_eq!(
+        crate::cache::retrieve(&token).as_deref(),
+        Some(raw.as_str())
+    );
 
     let requests = seen.lock().unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].context_token, "turn-1");
     assert_eq!(requests[0].purpose, PURPOSE);
     assert_eq!(requests[0].system, SYSTEM_PROMPT);
-    assert!(requests[0].prompt.contains("Caller focus: the install steps"));
+    assert!(
+        requests[0]
+            .prompt
+            .contains("Caller focus: the install steps")
+    );
     drop(requests);
     llm::configure_callback(None);
 }
@@ -175,7 +185,10 @@ async fn three_failures_open_the_breaker_for_that_scope_only() {
         maybe_summarize(input(&raw, None, "breaker"), &opts()).await,
         SummaryOutcome::Unavailable(UnavailableReason::Disabled)
     );
-    assert_eq!(calls.load(Ordering::SeqCst), MAX_CONSECUTIVE_FAILURES as usize);
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        MAX_CONSECUTIVE_FAILURES as usize
+    );
 
     // Another conversation is unaffected.
     assert_eq!(
@@ -194,11 +207,19 @@ async fn an_identical_payload_reuses_its_summary_but_another_focus_does_not() {
         let outcome = maybe_summarize(input(&raw, Some("pricing"), "cache"), &opts()).await;
         assert!(matches!(outcome, SummaryOutcome::Summarized { .. }));
     }
-    assert_eq!(seen.lock().unwrap().len(), 1, "the repeat is served from cache");
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        1,
+        "the repeat is served from cache"
+    );
 
     let outcome = maybe_summarize(input(&raw, Some("the changelog"), "cache"), &opts()).await;
     assert!(matches!(outcome, SummaryOutcome::Summarized { .. }));
-    assert_eq!(seen.lock().unwrap().len(), 2, "a new focus is a new summary");
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        2,
+        "a new focus is a new summary"
+    );
     llm::configure_callback(None);
 }
 

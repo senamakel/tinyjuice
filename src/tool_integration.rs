@@ -683,5 +683,4 @@ mod tests {
         );
         crate::llm::configure_callback(None);
     }
-
 }

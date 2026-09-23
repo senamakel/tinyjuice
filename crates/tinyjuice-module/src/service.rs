@@ -9,13 +9,13 @@ use tinyjuice::types::{AgentTokenjuiceCompression, CompressedOutput, ContentHint
 // These five used to be private structs in this file, which meant a host had
 // no way to reach them and re-declared its own — the drift a shared contract
 // exists to remove.
-pub use tinyjuice_bus::names::{BUS_NAME, ML_HOST_NAME, ML_HOST_PATH, OBJECT_PATH};
+use tinyjuice::tool_integration::ToolOutputCall;
 use tinyjuice_bus::names::ml_host;
+pub use tinyjuice_bus::names::{BUS_NAME, ML_HOST_NAME, ML_HOST_PATH, OBJECT_PATH};
 use tinyjuice_bus::wire::{
     CacheStats, CompactRequest, CompactResponse, GenerateRequest, InstallRequest,
     RangeUnit as WireRangeUnit, RetrieveRange,
 };
-use tinyjuice::tool_integration::ToolOutputCall;
 
 /// Deadline for one host model call. A summary of a large page takes tens of
 /// seconds, well past the bus default; this bounds a hung host, not a slow one.
