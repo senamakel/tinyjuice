@@ -144,14 +144,19 @@ pub async fn maybe_summarize(input: SummaryInput<'_>, opts: &CompressOptions) ->
     // A summary drops information. Unless the host allows unrecoverable loss,
     // it is only acceptable when the original can be retrieved from CCR.
     if !opts.ccr_enabled && !opts.lossy_without_ccr {
-        log::debug!("[tinyjuice::summarize] CCR off and lossy output disallowed, skipping tool={tool}");
+        log::debug!(
+            "[tinyjuice::summarize] CCR off and lossy output disallowed, skipping tool={tool}"
+        );
         return SummaryOutcome::NotNeeded;
     }
 
     let focus = input.focus.map(str::trim).filter(|f| !f.is_empty());
     // Without a scope, the call is its own scope: an unscoped caller must not
     // share a cache entry or a breaker with every other unscoped caller.
-    let scope = input.scope.filter(|s| !s.is_empty()).unwrap_or(context_token);
+    let scope = input
+        .scope
+        .filter(|s| !s.is_empty())
+        .unwrap_or(context_token);
     let key = cache_key(scope, tool, focus, raw);
     // Checked before the breaker: a summary already written costs nothing, so a
     // broken model is no reason to withhold it.

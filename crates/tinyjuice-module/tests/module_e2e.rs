@@ -192,7 +192,11 @@ async fn compact_with_calls_back_to_the_host_for_a_focused_summary() {
         .expect("CompactWith should succeed");
 
     assert_eq!(response.compressor, "llm_summary");
-    assert!(response.text.starts_with("the limit is 60 requests a minute"));
+    assert!(
+        response
+            .text
+            .starts_with("the limit is 60 requests a minute")
+    );
     assert!(response.text.contains("tinyjuice_retrieve"));
     assert!(response.notice.is_none());
     let prompts = host.prompts.lock().unwrap().clone();
