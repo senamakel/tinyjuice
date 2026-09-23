@@ -180,8 +180,9 @@ pub struct ToolOutputReport {
     pub notice: Option<&'static str>,
 }
 
-/// Compact one tool result: the LLM summary stage first (full profile only),
-/// then the content router.
+/// Compact one tool result: the LLM summary stage first (the full profile, or
+/// the light profile when the host passed a context token), then the content
+/// router.
 ///
 /// A successful summary is final — it already carries the recovery footer for
 /// the original, and routing a model-written note through compressors built
@@ -239,9 +240,23 @@ pub async fn compact_tool_output(call: ToolOutputCall<'_>) -> ToolOutputReport {
         };
     }
 
-    // The summary stage. `Light` keeps exact tool text, so it never runs there.
+    // The summary stage. `Full` always considers it. `Light` keeps exact tool
+    // text from the router's compressors, but a host that bound a summary call
+    // to this result (a context token) asked for one explicitly — OpenHuman
+    // does so only for its orchestrator's oversized results — so it runs there
+    // too, with CCR on: the summary is lossy, and the exact original must stay
+    // retrievable. Without a token, `Light` never reaches the model.
     let mut notice = None;
-    if profile == AgentTokenjuiceCompression::Full {
+    let summary_opts = match profile {
+        AgentTokenjuiceCompression::Full => Some(opts.clone()),
+        AgentTokenjuiceCompression::Light if context_token.is_some() => {
+            let mut summary_opts = opts.clone();
+            summary_opts.ccr_enabled = current_options().ccr_enabled;
+            Some(summary_opts)
+        }
+        _ => None,
+    };
+    if let Some(summary_opts) = summary_opts {
         let outcome = super::summarize::maybe_summarize(
             super::summarize::SummaryInput {
                 tool_name,
@@ -250,7 +265,7 @@ pub async fn compact_tool_output(call: ToolOutputCall<'_>) -> ToolOutputReport {
                 context_token,
                 scope,
             },
-            &opts,
+            &summary_opts,
         )
         .await;
         match outcome {
@@ -667,20 +682,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_light_profile_never_summarizes() {
+    async fn the_light_profile_never_summarizes_unasked() {
         let _guard = crate::llm::callback_test_guard().await;
         enable_llm_summary();
         crate::llm::configure_callback(Some(std::sync::Arc::new(|_| {
-            Box::pin(async { panic!("light must not reach the model") })
+            Box::pin(async { panic!("light without a context token must not reach the model") })
         })));
         let output = "integration light profile ".repeat(60);
-        let report = compact_tool_output(call(
-            &output,
-            AgentTokenjuiceCompression::Light,
-            Some("anything"),
-        ))
+        let report = compact_tool_output(ToolOutputCall {
+            context_token: None,
+            ..call(&output, AgentTokenjuiceCompression::Light, Some("anything"))
+        })
         .await;
         assert_ne!(report.stats.rule_id, "llm_summary");
+        crate::llm::configure_callback(None);
+    }
+
+    /// A host that binds a summary call to a light-profile result (OpenHuman's
+    /// orchestrator, whose `coding` model hint resolves to `Light`) gets its
+    /// summary, and the exact original stays retrievable from CCR.
+    #[tokio::test]
+    async fn the_light_profile_summarizes_when_the_host_asks() {
+        let _guard = crate::llm::callback_test_guard().await;
+        enable_llm_summary();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = calls.clone();
+        crate::llm::configure_callback(Some(std::sync::Arc::new(move |_| {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async { Ok(Some("light note".to_string())) })
+        })));
+        let output = "integration light profile asked ".repeat(60);
+        let report = compact_tool_output(ToolOutputCall {
+            scope: Some("tool-integration-light-asked"),
+            ..call(&output, AgentTokenjuiceCompression::Light, None)
+        })
+        .await;
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(report.text.starts_with("light note"), "{}", report.text);
+        assert_eq!(report.stats.rule_id, "llm_summary");
+        assert!(report.stats.applied);
+        assert!(
+            report
+                .text
+                .contains(crate::cache::marker::RETRIEVE_TOOL_NAME),
+            "the exact original stays retrievable: {}",
+            report.text
+        );
         crate::llm::configure_callback(None);
     }
 
