@@ -105,6 +105,40 @@ the original bytes unchanged.
   needs from the result; the focus steers the summary, keys its cache, and
   ranks text for the deterministic compressors when no summary is written.
   Off unless `llm_summary_enabled`, and skipped without a host context token.
+
+### LLM summary stage
+
+A host enables summaries with three `CompressOptions` fields, installed through
+`Install` like the other options:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `llm_summary_enabled` | `false` | Allow the stage at all. |
+| `llm_summary_threshold_tokens` | `4000` | Smaller results are never summarized. |
+| `llm_summary_max_input_tokens` | `2000000` | Larger results are not summarized, and `notice` says so. |
+
+Tokens are estimated at four characters a token. Each call then goes through
+`tool_integration::compact_tool_output(ToolOutputCall)` in the library, or
+`CompactWith(CompactRequest)` on the bus:
+
+- `context_token` is required for a summary. The module passes it back
+  unchanged in `MlHost.Generate(GenerateRequest)`, and the host runs the model
+  call under the turn it names. `None` in reply declines.
+- `focus` is written into the prompt, keys the summary cache, and ranks text
+  for the deterministic compressors when no summary is written.
+- `scope`, usually the conversation id, bounds summary reuse and the failure
+  breaker. Without a scope, each call is its own scope.
+- `compaction_enabled` (`enabled` on the wire) gates only the content router.
+  A summary can run with the router off.
+- Only the `full` profile summarizes.
+- **Recovery contract:** a summary is accepted only if the original is stored
+  in CCR, and the returned text then ends with the `tinyjuice_retrieve`
+  footer. The exception is `lossy_without_ccr = true`. With CCR off, or when
+  the original cannot be retained, the summary is discarded and the original
+  goes on to the router.
+- **`notice`:** when the stage applied but produced nothing usable (too large,
+  breaker open, model failed), `notice` holds a model-facing sentence for the
+  host to prefix after its own truncation.
 - **Generic command fallback** - line-oriented head/tail reduction for command
   output when no specialized rule wins.
 
