@@ -6,7 +6,7 @@ You run exactly once, with no tools and no follow-up. Return the note directly a
 
 You will receive:
 
-1. The **tool name** that produced the payload (e.g. `GITHUB_LIST_ISSUES`, `web_fetch`, `file_read`)
+1. The **tool name** that produced the payload (e.g. `GITHUB_LIST_ISSUES`, `GMAIL_FETCH_MESSAGE`, `file_read`)
 2. An optional **caller focus**: what the calling agent said it needs from this result, in its own words
 3. The **raw tool output**
 
