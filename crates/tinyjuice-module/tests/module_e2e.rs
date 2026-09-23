@@ -103,6 +103,8 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         .expect("retrieve should succeed");
     assert_eq!(recovered, Some(content));
     assert!(matches!(modules.list()[0].state, ModuleState::Ready));
+
+    compact_with_calls_back_to_the_host_for_a_focused_summary(&client, &proxy).await;
     broker_task.abort();
 }
 
@@ -124,19 +126,13 @@ impl TestHost {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires TINYJUICE_TEST_MODULE to point at the built cdylib"]
-async fn compact_with_calls_back_to_the_host_for_a_focused_summary() {
-    let artifact =
-        std::env::var_os("TINYJUICE_TEST_MODULE").expect("TINYJUICE_TEST_MODULE must be set");
-    let bus = MemoryBus::new();
-    let broker = Broker::new();
-    let broker_task = broker.spawn(bus.clone());
-    let modules = ModuleHost::new(broker);
-
-    let client = Connection::connect(bus.connect().await.expect("memory transport"))
-        .await
-        .expect("client should connect");
+/// `CompactWith` over the same broker: the module asks the host's
+/// `MlHost.Generate` for a summary written for the caller's focus. Runs inside
+/// the one test above, because a process loads the cdylib once.
+async fn compact_with_calls_back_to_the_host_for_a_focused_summary(
+    client: &Connection,
+    proxy: &tinybus::Proxy,
+) {
     let host = TestHost {
         prompts: Default::default(),
     };
@@ -151,12 +147,6 @@ async fn compact_with_calls_back_to_the_host_for_a_focused_summary() {
         .request_name(tinyjuice_bus::ML_HOST_NAME)
         .await
         .expect("host name");
-
-    modules.load_file(artifact).expect("module should load");
-    wait_until_serving(&client).await;
-    let proxy = client
-        .proxy(BUS_NAME, OBJECT_PATH, BUS_NAME)
-        .expect("module proxy");
     proxy
         .call::<()>(
             "Install",
@@ -202,7 +192,6 @@ async fn compact_with_calls_back_to_the_host_for_a_focused_summary() {
     let prompts = host.prompts.lock().unwrap().clone();
     assert_eq!(prompts.len(), 1);
     assert!(prompts[0].contains("Caller focus: the rate limits"));
-    broker_task.abort();
 }
 
 async fn wait_until_serving(client: &Connection) {
