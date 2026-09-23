@@ -722,7 +722,9 @@ mod tests {
         assert_eq!(report.stats.rule_id, "llm_summary");
         assert!(report.stats.applied);
         assert!(
-            report.text.contains(crate::RETRIEVE_TOOL_NAME),
+            report
+                .text
+                .contains(crate::cache::marker::RETRIEVE_TOOL_NAME),
             "the exact original stays retrievable: {}",
             report.text
         );
