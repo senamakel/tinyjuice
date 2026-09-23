@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::CompressOptions;
+use crate::types::{AgentTokenjuiceCompression, CompressOptions};
 
 /// The one-shot configuration a host installs before its first compression.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +25,65 @@ pub struct InstallRequest {
     /// Where the disk tier writes, when the host wants one. `None` keeps the
     /// cache in memory only.
     pub disk_tier_root: Option<String>,
+}
+
+/// What `CompactWith` takes: `Compact`'s positional arguments plus the
+/// per-call context the summary stage needs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactRequest {
+    /// The tool's output.
+    pub content: String,
+    /// The agent-level tool name.
+    pub tool_name: String,
+    /// Host kill-switch; `false` returns `content` untouched.
+    #[serde(default = "enabled_by_default")]
+    pub enabled: bool,
+    /// The agent's compaction profile.
+    #[serde(default = "full_profile")]
+    pub profile: AgentTokenjuiceCompression,
+    /// The tool call's JSON arguments, for command, extension and query hints.
+    #[serde(default)]
+    pub arguments: Option<serde_json::Value>,
+    /// What the calling model said it needs from this result. Steers the
+    /// summary, and ranks text when a deterministic compressor runs instead.
+    #[serde(default)]
+    pub focus: Option<String>,
+    /// Opaque to the module. Passed back unchanged in
+    /// [`GenerateRequest::context_token`] so the host can run the summary
+    /// under the turn that made the call. `None` means the host has no turn to
+    /// offer, and the summary stage is skipped.
+    #[serde(default)]
+    pub context_token: Option<String>,
+    /// Scopes summary reuse, typically the conversation id. Two scopes never
+    /// share a cached summary.
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+fn enabled_by_default() -> bool {
+    true
+}
+
+fn full_profile() -> AgentTokenjuiceCompression {
+    AgentTokenjuiceCompression::Full
+}
+
+/// What the module sends the host's `Generate` member.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateRequest {
+    /// The [`CompactRequest::context_token`] this call serves.
+    pub context_token: String,
+    /// What the call is for, so a host can route or meter it. Currently only
+    /// `"tool_output_summary"`.
+    pub purpose: String,
+    /// The system prompt, written by the module.
+    pub system: String,
+    /// The single user message.
+    pub prompt: String,
+    /// Ceiling on the reply's length.
+    pub max_output_tokens: u32,
 }
 
 /// What `Compact` answers with.
