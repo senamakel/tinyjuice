@@ -17,6 +17,10 @@ use tinyjuice_bus::wire::{
 };
 use tinyjuice::tool_integration::ToolOutputCall;
 
+/// Deadline for one host model call. A summary of a large page takes tens of
+/// seconds, well past the bus default; this bounds a hung host, not a slow one.
+const GENERATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 #[derive(Clone)]
 struct Compression;
 
@@ -183,7 +187,8 @@ async fn setup(connection: Connection) -> BusResult<()> {
         Box::pin(async move {
             let proxy = connection
                 .proxy(ML_HOST_NAME, ML_HOST_PATH, ML_HOST_NAME)
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| error.to_string())?
+                .with_timeout(GENERATE_TIMEOUT);
             proxy
                 .call(ml_host::GENERATE, (request,))
                 .await
