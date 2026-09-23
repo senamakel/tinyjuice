@@ -15,6 +15,7 @@ pub mod conversation;
 pub mod detect;
 mod error;
 pub mod live_zone;
+pub mod llm;
 pub mod ml;
 pub mod observability;
 pub mod openhuman;
@@ -26,6 +27,7 @@ pub mod relevance;
 pub mod rules;
 pub mod savings;
 pub mod sdk;
+pub mod summarize;
 pub mod text;
 pub mod tokens;
 pub mod tool_integration;
@@ -100,8 +102,9 @@ pub use sdk::{
     host_install_specs, host_template, request_from_json_value,
 };
 pub use tool_integration::{
-    CompactionStats, compact_output, compact_output_with_policy, compact_tool_output_with_policy,
-    configure, current_options, install_config,
+    CompactionStats, ToolOutputCall, ToolOutputReport, compact_output, compact_output_with_policy,
+    compact_tool_output, compact_tool_output_with_policy, configure, current_options,
+    install_config,
 };
 pub use types::{
     AgentTokenjuiceCompression, CodeElision, CodeStubOutput, CompactResult, CompressInput,

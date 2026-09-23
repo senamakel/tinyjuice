@@ -97,6 +97,14 @@ the original bytes unchanged.
   into the automatic compression pipeline.
 - **Plain-text ML slot** - optional host-provided callback for learned text
   compression; disabled by default.
+- **LLM summary stage** - for an oversized tool result under the `full`
+  profile, TinyJuice writes an extraction prompt and asks the host's model
+  (`MlHost.Generate`, installed through `llm::configure_callback`) for a
+  summary, then offloads the original to CCR so nothing is lost. A caller can
+  pass a `focus` (`CompactWith` / `ToolOutputCall::focus`) saying what it
+  needs from the result; the focus steers the summary, keys its cache, and
+  ranks text for the deterministic compressors when no summary is written.
+  Off unless `llm_summary_enabled`, and skipped without a host context token.
 - **Generic command fallback** - line-oriented head/tail reduction for command
   output when no specialized rule wins.
 
@@ -366,6 +374,7 @@ docs/references/     Design references and candidate strategy specs
 | Code | Imports, signatures, top-level structure |
 | HTML | Readable page text without script and markup noise |
 | Plain text | Pass-through unless a host enables an ML callback |
+| Oversized result, host model enabled | An LLM summary written for the caller's focus, with the original retrievable |
 
 ## How Much Does It Save?
 

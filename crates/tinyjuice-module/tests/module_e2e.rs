@@ -15,6 +15,7 @@ const EXPECTED_METHODS: &[&str] = &[
     "Detect",
     "Compress",
     "Compact",
+    "CompactWith",
     "Retrieve",
     "CacheStats",
 ];

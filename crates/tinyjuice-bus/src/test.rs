@@ -1,8 +1,8 @@
 //! Tests that pin the shared `TinyJuice` vocabulary and compatibility rule.
 
 use super::{
-    AgentTokenjuiceCompression, CONTRACT_VERSION, CacheStats, CompressOptions, CompressorKind,
-    ContentKind, RangeUnit, RetrieveRange, is_compatible,
+    AgentTokenjuiceCompression, CONTRACT_VERSION, CacheStats, CompactRequest, CompressOptions,
+    CompressorKind, ContentKind, GenerateRequest, RangeUnit, RetrieveRange, is_compatible,
 };
 
 #[test]
@@ -109,7 +109,9 @@ fn the_flattened_spellings_round_trip_for_every_variant() {
         CompressorKind::Diff,
         CompressorKind::Html,
         CompressorKind::MlText,
+        CompressorKind::TextCrusher,
         CompressorKind::Generic,
+        CompressorKind::LlmSummary,
         CompressorKind::None,
     ] {
         assert_eq!(
@@ -123,4 +125,33 @@ fn the_flattened_spellings_round_trip_for_every_variant() {
     // silent `PlainText` fallback on every response.
     assert!(ContentKind::from_str("plainText").is_err());
     assert!(CompressorKind::from_str("smartCrusher").is_err());
+}
+
+#[test]
+fn a_compact_request_needs_only_content_and_tool_name() {
+    // Everything past the two positional `Compact` arguments is optional, so a
+    // host can move from `Compact` to `CompactWith` without learning the rest.
+    let request: CompactRequest =
+        serde_json::from_str(r#"{"content":"body","toolName":"web_fetch"}"#).unwrap();
+    assert!(request.enabled);
+    assert_eq!(request.profile, AgentTokenjuiceCompression::Full);
+    assert!(request.focus.is_none());
+    assert!(request.context_token.is_none());
+    assert!(request.arguments.is_none());
+    assert!(request.scope.is_none());
+}
+
+#[test]
+fn a_generate_request_keeps_its_camel_case_fields() {
+    let request = GenerateRequest {
+        context_token: "t".into(),
+        purpose: "tool_output_summary".into(),
+        system: "s".into(),
+        prompt: "p".into(),
+        max_output_tokens: 7,
+    };
+    assert_eq!(
+        serde_json::to_string(&request).unwrap(),
+        r#"{"contextToken":"t","purpose":"tool_output_summary","system":"s","prompt":"p","maxOutputTokens":7}"#
+    );
 }

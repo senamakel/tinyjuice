@@ -336,6 +336,8 @@ pub enum CompressorKind {
     TextCrusher,
     /// Line-oriented head/tail fallback.
     Generic,
+    /// The host's LLM wrote a summary of the whole payload.
+    LlmSummary,
     /// No compressor fired — pass-through.
     None,
 }
@@ -353,6 +355,7 @@ impl CompressorKind {
             CompressorKind::MlText => "ml_text",
             CompressorKind::TextCrusher => "textcrusher",
             CompressorKind::Generic => "generic",
+            CompressorKind::LlmSummary => "llm_summary",
             CompressorKind::None => "none",
         }
     }
@@ -373,7 +376,9 @@ impl std::str::FromStr for CompressorKind {
             "diff" => Self::Diff,
             "html" => Self::Html,
             "ml_text" => Self::MlText,
+            "textcrusher" => Self::TextCrusher,
             "generic" => Self::Generic,
+            "llm_summary" => Self::LlmSummary,
             "none" => Self::None,
             _ => return Err(()),
         })
@@ -448,6 +453,17 @@ pub struct CompressOptions {
     /// historical ceiling-division estimate is kept bit-for-bit; a custom
     /// value uses round-half-up.
     pub chars_per_token: f32,
+    /// Whether an oversized tool result may be summarized by the host's LLM
+    /// (the `Generate` member of [`ML_HOST_NAME`](crate::names::ML_HOST_NAME)).
+    /// Off by default: it costs a model call, so a host turns it on only for
+    /// the agents whose context it is protecting.
+    pub llm_summary_enabled: bool,
+    /// Results estimated below this many tokens are never summarized — an
+    /// extra model round-trip is not worth it on a small payload.
+    pub llm_summary_threshold_tokens: usize,
+    /// Results estimated above this many tokens are not summarized either: the
+    /// model call would cost more than paging the original does.
+    pub llm_summary_max_input_tokens: usize,
 }
 
 impl Default for CompressOptions {
@@ -472,6 +488,9 @@ impl Default for CompressOptions {
             max_inline_chars: None,
             code_target_ratio: None,
             chars_per_token: 4.0,
+            llm_summary_enabled: false,
+            llm_summary_threshold_tokens: 4_000,
+            llm_summary_max_input_tokens: 2_000_000,
         }
     }
 }

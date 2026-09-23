@@ -27,6 +27,10 @@ pub mod methods {
     pub const COMPRESS: &str = "Compress";
     /// Compacts a tool result, reporting token counts.
     pub const COMPACT: &str = "Compact";
+    /// [`COMPACT`] with a [`CompactRequest`](crate::wire::CompactRequest):
+    /// the tool's arguments, the caller's summary focus, and the context token
+    /// the module hands back to the host when it asks for a summary.
+    pub const COMPACT_WITH: &str = "CompactWith";
     /// Reads back an original the module offloaded.
     pub const RETRIEVE: &str = "Retrieve";
     /// Reports what the cache is holding.
@@ -37,6 +41,10 @@ pub mod methods {
 pub mod ml_host {
     /// Compresses plain text with the host's ML compressor, or declines.
     pub const COMPRESS: &str = "Compress";
+    /// Runs one tool-less model call for the module, or declines. Takes a
+    /// [`GenerateRequest`](crate::wire::GenerateRequest) and answers
+    /// `Option<String>`: `None` is the host saying it has no model for this.
+    pub const GENERATE: &str = "Generate";
 }
 
 /// Every member of [`BUS_NAME`], in the interface's declaration order.
@@ -45,6 +53,7 @@ pub const METHODS: &[&str] = &[
     methods::DETECT,
     methods::COMPRESS,
     methods::COMPACT,
+    methods::COMPACT_WITH,
     methods::RETRIEVE,
     methods::CACHE_STATS,
 ];

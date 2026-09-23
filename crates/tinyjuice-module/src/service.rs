@@ -9,10 +9,17 @@ use tinyjuice::types::{AgentTokenjuiceCompression, CompressedOutput, ContentHint
 // These five used to be private structs in this file, which meant a host had
 // no way to reach them and re-declared its own — the drift a shared contract
 // exists to remove.
+use tinyjuice::tool_integration::ToolOutputCall;
+use tinyjuice_bus::names::ml_host;
 pub use tinyjuice_bus::names::{BUS_NAME, ML_HOST_NAME, ML_HOST_PATH, OBJECT_PATH};
 use tinyjuice_bus::wire::{
-    CacheStats, CompactResponse, InstallRequest, RangeUnit as WireRangeUnit, RetrieveRange,
+    CacheStats, CompactRequest, CompactResponse, GenerateRequest, InstallRequest,
+    RangeUnit as WireRangeUnit, RetrieveRange,
 };
+
+/// Deadline for one host model call. A summary of a large page takes tens of
+/// seconds, well past the bus default; this bounds a hung host, not a slow one.
+const GENERATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 #[derive(Clone)]
 struct Compression;
@@ -48,42 +55,21 @@ impl Compression {
         enabled: bool,
         profile: AgentTokenjuiceCompression,
     ) -> BusResult<CompactResponse> {
-        if !enabled {
-            let bytes = content.len();
-            let tokens = tinyjuice::tokens::estimate_tokens(&content);
-            return Ok(CompactResponse {
-                text: content,
-                original_bytes: bytes,
-                compacted_bytes: bytes,
-                rule_id: "none/disabled".to_string(),
-                applied: false,
-                content_kind: "plain_text".to_string(),
-                compressor: "none".to_string(),
-                original_tokens: tokens,
-                compacted_tokens: tokens,
-            });
-        }
-        let original_tokens = tinyjuice::tokens::estimate_tokens(&content);
-        let (text, stats) = tinyjuice::tool_integration::compact_tool_output_with_policy(
-            &tool_name, None, &content, None, profile,
-        )
-        .await;
-        let compacted_tokens = tinyjuice::tokens::estimate_tokens(&text);
-        let (compressor, content_kind) = stats.rule_id.strip_prefix("none/").map_or_else(
-            || (stats.rule_id.clone(), "plain_text".to_string()),
-            |kind| ("none".to_string(), kind.to_string()),
-        );
-        Ok(CompactResponse {
-            text,
-            original_bytes: stats.original_bytes,
-            compacted_bytes: stats.compacted_bytes,
-            rule_id: stats.rule_id,
-            applied: stats.applied,
-            content_kind,
-            compressor,
-            original_tokens,
-            compacted_tokens,
+        Ok(compact_request(CompactRequest {
+            content,
+            tool_name,
+            enabled,
+            profile,
+            arguments: None,
+            focus: None,
+            context_token: None,
+            scope: None,
         })
+        .await)
+    }
+
+    async fn compact_with(&self, request: CompactRequest) -> BusResult<CompactResponse> {
+        Ok(compact_request(request).await)
     }
 
     async fn retrieve(
@@ -111,6 +97,54 @@ impl Compression {
     }
 }
 
+/// `Compact` and `CompactWith` share one body; the positional form is
+/// `CompactWith` with no arguments, focus or context. `enabled = false` turns
+/// the content router off but not the summary stage, which is gated by its
+/// own option and a context token.
+async fn compact_request(request: CompactRequest) -> CompactResponse {
+    let CompactRequest {
+        content,
+        tool_name,
+        enabled,
+        profile,
+        arguments,
+        focus,
+        context_token,
+        scope,
+    } = request;
+    let original_tokens = tinyjuice::tokens::estimate_tokens(&content);
+    let report = tinyjuice::tool_integration::compact_tool_output(ToolOutputCall {
+        tool_name: &tool_name,
+        arguments: arguments.as_ref(),
+        output: &content,
+        exit_code: None,
+        profile,
+        compaction_enabled: enabled,
+        focus: focus.as_deref(),
+        context_token: context_token.as_deref(),
+        scope: scope.as_deref(),
+    })
+    .await;
+    let stats = report.stats;
+    let compacted_tokens = tinyjuice::tokens::estimate_tokens(&report.text);
+    let (compressor, content_kind) = stats.rule_id.strip_prefix("none/").map_or_else(
+        || (stats.rule_id.clone(), "plain_text".to_string()),
+        |kind| ("none".to_string(), kind.to_string()),
+    );
+    CompactResponse {
+        text: report.text,
+        original_bytes: stats.original_bytes,
+        compacted_bytes: stats.compacted_bytes,
+        rule_id: stats.rule_id,
+        applied: stats.applied,
+        content_kind,
+        compressor,
+        original_tokens,
+        compacted_tokens,
+        notice: report.notice.map(str::to_string),
+    }
+}
+
 async fn setup(connection: Connection) -> BusResult<()> {
     let ml_connection = connection.clone();
     tinyjuice::ml::configure_callback(Some(Arc::new(move |text, options| {
@@ -121,12 +155,29 @@ async fn setup(connection: Connection) -> BusResult<()> {
                 .map_err(|error| error.to_string())?;
             proxy
                 .call(
-                    "Compress",
+                    ml_host::COMPRESS,
                     (
                         text,
                         serde_json::to_value(options).map_err(|error| error.to_string())?,
                     ),
                 )
+                .await
+                .map_err(|error| error.to_string())
+        })
+    })));
+
+    // The summary stage's model call goes to the same host object: the module
+    // writes the prompt, the host owns the model and the turn it runs under.
+    let llm_connection = connection.clone();
+    tinyjuice::llm::configure_callback(Some(Arc::new(move |request: GenerateRequest| {
+        let connection = llm_connection.clone();
+        Box::pin(async move {
+            let proxy = connection
+                .proxy(ML_HOST_NAME, ML_HOST_PATH, ML_HOST_NAME)
+                .map_err(|error| error.to_string())?
+                .with_timeout(GENERATE_TIMEOUT);
+            proxy
+                .call(ml_host::GENERATE, (request,))
                 .await
                 .map_err(|error| error.to_string())
         })
@@ -145,7 +196,15 @@ mod exports {
         setup = super::setup,
         worker_threads = 2,
         provides = ["ai.tinyhumans.tinyjuice.Compression"],
-        methods = ["Install", "Detect", "Compress", "Compact", "Retrieve", "CacheStats"],
+        methods = [
+            "Install",
+            "Detect",
+            "Compress",
+            "Compact",
+            "CompactWith",
+            "Retrieve",
+            "CacheStats"
+        ],
         signals = [],
         requires = [],
         optional = ["ai.tinyhumans.tinyjuice.MlHost"],

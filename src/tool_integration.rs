@@ -133,6 +133,71 @@ pub async fn compact_tool_output_with_policy(
     exit_code: Option<i32>,
     profile: AgentTokenjuiceCompression,
 ) -> (String, CompactionStats) {
+    let report = compact_tool_output(ToolOutputCall {
+        tool_name,
+        arguments,
+        output,
+        exit_code,
+        profile,
+        compaction_enabled: true,
+        focus: None,
+        context_token: None,
+        scope: None,
+    })
+    .await;
+    (report.text, report.stats)
+}
+
+/// Everything [`compact_tool_output`] considers about one tool result.
+#[derive(Debug, Clone, Copy)]
+pub struct ToolOutputCall<'a> {
+    pub tool_name: &'a str,
+    /// The tool call's JSON arguments.
+    pub arguments: Option<&'a Value>,
+    /// The captured tool output (already credential-scrubbed).
+    pub output: &'a str,
+    pub exit_code: Option<i32>,
+    pub profile: AgentTokenjuiceCompression,
+    /// Whether the content router runs. `false` still allows the summary
+    /// stage: a host can want a model-written summary of an oversized result
+    /// without opting its agents into deterministic compaction.
+    pub compaction_enabled: bool,
+    /// What the caller said it needs from this result.
+    pub focus: Option<&'a str>,
+    /// Handed back to the host's `Generate`; `None` skips the summary stage.
+    pub context_token: Option<&'a str>,
+    /// Scopes summary reuse and the failure breaker.
+    pub scope: Option<&'a str>,
+}
+
+/// What [`compact_tool_output`] produced.
+#[derive(Debug, Clone)]
+pub struct ToolOutputReport {
+    pub text: String,
+    pub stats: CompactionStats,
+    /// A model-facing notice the host should prefix after its own caps: the
+    /// summary stage applied and did not produce a summary.
+    pub notice: Option<&'static str>,
+}
+
+/// Compact one tool result: the LLM summary stage first (full profile only),
+/// then the content router.
+///
+/// A successful summary is final — it already carries the recovery footer for
+/// the original, and routing a model-written note through compressors built
+/// for machine output would only damage it.
+pub async fn compact_tool_output(call: ToolOutputCall<'_>) -> ToolOutputReport {
+    let ToolOutputCall {
+        tool_name,
+        arguments,
+        output,
+        exit_code,
+        profile,
+        compaction_enabled,
+        focus,
+        context_token,
+        scope,
+    } = call;
     let original_bytes = output.len();
 
     let opts = match options_for_agent(profile) {
@@ -144,39 +209,100 @@ pub async fn compact_tool_output_with_policy(
                 profile.as_str(),
                 original_bytes
             );
-            return (
-                output.to_string(),
-                CompactionStats {
+            return ToolOutputReport {
+                text: output.to_string(),
+                stats: CompactionStats {
                     tool_name: tool_name.to_string(),
                     original_bytes,
                     compacted_bytes: original_bytes,
                     rule_id: rule_id.to_string(),
                     applied: false,
                 },
-            );
+                notice: None,
+            };
         }
     };
 
     // A recovery tool's output is the original we previously offloaded — never
     // re-compact it, or the agent could never see the full data it asked for.
     if super::cache::is_recovery_tool(tool_name) {
-        return (
-            output.to_string(),
-            CompactionStats {
+        return ToolOutputReport {
+            text: output.to_string(),
+            stats: CompactionStats {
                 tool_name: tool_name.to_string(),
                 original_bytes,
                 compacted_bytes: original_bytes,
                 rule_id: "none/recovery-tool".to_string(),
                 applied: false,
             },
-        );
+            notice: None,
+        };
+    }
+
+    // The summary stage. `Light` keeps exact tool text, so it never runs there.
+    let mut notice = None;
+    if profile == AgentTokenjuiceCompression::Full {
+        let outcome = super::summarize::maybe_summarize(
+            super::summarize::SummaryInput {
+                tool_name,
+                content: output,
+                focus,
+                context_token,
+                scope,
+            },
+            &opts,
+        )
+        .await;
+        match outcome {
+            super::summarize::SummaryOutcome::Summarized { text, .. } => {
+                let compacted_bytes = text.len();
+                return ToolOutputReport {
+                    text,
+                    stats: CompactionStats {
+                        tool_name: tool_name.to_string(),
+                        original_bytes,
+                        compacted_bytes,
+                        rule_id: super::types::CompressorKind::LlmSummary
+                            .as_str()
+                            .to_string(),
+                        applied: true,
+                    },
+                    notice: None,
+                };
+            }
+            super::summarize::SummaryOutcome::NotNeeded => {}
+            super::summarize::SummaryOutcome::Unavailable(reason) => {
+                notice = Some(reason.notice());
+            }
+        }
+    }
+
+    if !compaction_enabled {
+        return ToolOutputReport {
+            text: output.to_string(),
+            stats: CompactionStats {
+                tool_name: tool_name.to_string(),
+                original_bytes,
+                compacted_bytes: original_bytes,
+                rule_id: "none/disabled".to_string(),
+                applied: false,
+            },
+            notice,
+        };
     }
 
     let (command, argv) = extract_command_argv(arguments);
     let hint = ContentHint {
         source_tool: Some(tool_name.to_string()),
         extension: extract_extension(arguments),
-        query: extract_query(arguments),
+        // With no query in the arguments, the caller's focus is the best
+        // statement of what to keep, and the text ranker already reads it.
+        query: extract_query(arguments).or_else(|| {
+            focus
+                .map(str::trim)
+                .filter(|f| !f.is_empty())
+                .map(str::to_string)
+        }),
         ..Default::default()
     };
 
@@ -202,7 +328,11 @@ pub async fn compact_tool_output_with_policy(
         },
         applied: res.applied,
     };
-    (res.text, stats)
+    ToolOutputReport {
+        text: res.text,
+        stats,
+        notice,
+    }
 }
 
 /// Minimal compaction for call sites that only have content + tool name. The
@@ -478,5 +608,126 @@ mod tests {
             extract_query(Some(&json!({"pattern": "foo bar"}))).as_deref(),
             Some("foo bar")
         );
+    }
+
+    /// Turn the summary stage on in the global options. Safe alongside the
+    /// other tests here: none of them passes a context token, so the stage
+    /// still declines for them.
+    fn enable_llm_summary() {
+        let mut opts = current_options();
+        opts.llm_summary_enabled = true;
+        opts.llm_summary_threshold_tokens = 10;
+        configure(opts);
+    }
+
+    fn call<'a>(
+        output: &'a str,
+        profile: AgentTokenjuiceCompression,
+        focus: Option<&'a str>,
+    ) -> ToolOutputCall<'a> {
+        ToolOutputCall {
+            tool_name: "web_fetch",
+            arguments: None,
+            output,
+            exit_code: None,
+            profile,
+            compaction_enabled: true,
+            focus,
+            context_token: Some("turn-7"),
+            scope: Some("tool-integration"),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_full_profile_summarizes_with_the_callers_focus() {
+        let _guard = crate::llm::callback_test_guard().await;
+        enable_llm_summary();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let sink = seen.clone();
+        crate::llm::configure_callback(Some(std::sync::Arc::new(
+            move |request: crate::llm::GenerateRequest| {
+                sink.lock().unwrap().push(request.prompt);
+                Box::pin(async { Ok(Some("focused note".to_string())) })
+            },
+        )));
+
+        let output = "integration full profile ".repeat(60);
+        let report = compact_tool_output(call(
+            &output,
+            AgentTokenjuiceCompression::Full,
+            Some("the rate limits"),
+        ))
+        .await;
+        assert!(report.text.starts_with("focused note"));
+        assert_eq!(report.stats.rule_id, "llm_summary");
+        assert!(report.stats.applied);
+        assert!(report.notice.is_none());
+        assert!(seen.lock().unwrap()[0].contains("Caller focus: the rate limits"));
+        crate::llm::configure_callback(None);
+    }
+
+    #[tokio::test]
+    async fn the_light_profile_never_summarizes() {
+        let _guard = crate::llm::callback_test_guard().await;
+        enable_llm_summary();
+        crate::llm::configure_callback(Some(std::sync::Arc::new(|_| {
+            Box::pin(async { panic!("light must not reach the model") })
+        })));
+        let output = "integration light profile ".repeat(60);
+        let report = compact_tool_output(call(
+            &output,
+            AgentTokenjuiceCompression::Light,
+            Some("anything"),
+        ))
+        .await;
+        assert_ne!(report.stats.rule_id, "llm_summary");
+        crate::llm::configure_callback(None);
+    }
+
+    #[tokio::test]
+    async fn a_failed_summary_falls_through_with_a_notice() {
+        let _guard = crate::llm::callback_test_guard().await;
+        enable_llm_summary();
+        crate::llm::configure_callback(Some(std::sync::Arc::new(|_| {
+            Box::pin(async { Err("offline".to_string()) })
+        })));
+        let output = "integration failed summary ".repeat(60);
+        let report = compact_tool_output(ToolOutputCall {
+            scope: Some("tool-integration-failure"),
+            ..call(&output, AgentTokenjuiceCompression::Full, None)
+        })
+        .await;
+        assert_ne!(report.stats.rule_id, "llm_summary");
+        assert_eq!(
+            report.notice,
+            Some(crate::summarize::UnavailableReason::Failed.notice())
+        );
+        crate::llm::configure_callback(None);
+    }
+
+    #[tokio::test]
+    async fn a_summary_runs_even_with_compaction_disabled() {
+        let _guard = crate::llm::callback_test_guard().await;
+        enable_llm_summary();
+        crate::llm::configure_callback(Some(std::sync::Arc::new(|_| {
+            Box::pin(async { Ok(Some("note".to_string())) })
+        })));
+        let output = "integration compaction disabled ".repeat(60);
+        let report = compact_tool_output(ToolOutputCall {
+            compaction_enabled: false,
+            ..call(&output, AgentTokenjuiceCompression::Full, None)
+        })
+        .await;
+        assert_eq!(report.stats.rule_id, "llm_summary");
+
+        crate::llm::configure_callback(None);
+        let report = compact_tool_output(ToolOutputCall {
+            compaction_enabled: false,
+            scope: Some("tool-integration-disabled"),
+            ..call(&output, AgentTokenjuiceCompression::Full, None)
+        })
+        .await;
+        assert_eq!(report.stats.rule_id, "none/disabled");
+        assert_eq!(report.text, output);
     }
 }

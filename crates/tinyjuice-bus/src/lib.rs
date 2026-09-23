@@ -22,7 +22,10 @@ pub use types::{
     ContentKind,
 };
 pub use version::{CONTRACT_VERSION, is_compatible};
-pub use wire::{CacheStats, CompactResponse, InstallRequest, RangeUnit, RetrieveRange};
+pub use wire::{
+    CacheStats, CompactRequest, CompactResponse, GenerateRequest, InstallRequest, RangeUnit,
+    RetrieveRange,
+};
 
 #[cfg(test)]
 mod test;
