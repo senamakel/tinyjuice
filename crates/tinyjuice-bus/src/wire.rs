@@ -112,6 +112,10 @@ pub struct CompactResponse {
     pub original_tokens: u64,
     /// Estimated tokens in `text`.
     pub compacted_tokens: u64,
+    /// A model-facing notice the host should prefix after its own caps. Set
+    /// when the summary stage applied and could not produce a summary.
+    #[serde(default)]
+    pub notice: Option<String>,
 }
 
 /// What a [`RetrieveRange`] is measured in.
