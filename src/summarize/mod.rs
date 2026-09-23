@@ -353,4 +353,4 @@ fn record_success(scope: &str) {
 }
 
 #[cfg(test)]
-mod tests;
+mod test;
