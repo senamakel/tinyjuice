@@ -10,6 +10,9 @@ publish = false
 [lib]
 crate-type = ["rlib", "cdylib"]
 
+[features]
+linked = []
+
 [dependencies]
 tinyjuice = { path = "../..", default-features = false }
 # The interface vocabulary. Shared with hosts, so this adapter cannot drift
