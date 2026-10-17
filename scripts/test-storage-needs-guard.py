@@ -209,6 +209,10 @@ else:
         missing_edge["resolve"]["nodes"][0]["deps"] = []
         cases.append(("direct edge", missing_edge, None))
 
+        missing_edge_kind = metadata_fixture()
+        missing_edge_kind["resolve"]["nodes"][0]["deps"][0]["dep_kinds"] = []
+        cases.append(("edge kind", missing_edge_kind, None))
+
         for label, metadata, normal_graph in cases:
             with self.subTest(label=label):
                 result = self.run_guard(metadata, normal_graph=normal_graph)

@@ -105,6 +105,10 @@ def main() -> None:
             dep_kinds = item.get("dep_kinds")
             if not isinstance(dep_kinds, list) or not dep_kinds:
                 fail("Cargo metadata omitted dependency-kind evidence")
+            for kind in dep_kinds:
+                if (not isinstance(kind, dict) or "kind" not in kind or "target" not in kind
+                        or kind["kind"] not in (None, "normal", "build", "dev")):
+                    fail("Cargo metadata contains incomplete dependency-kind evidence")
             if any(kind.get("kind") in (None, "normal", "build")
                    for kind in dep_kinds if isinstance(kind, dict)):
                 pending.append(item["pkg"])
