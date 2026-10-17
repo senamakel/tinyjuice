@@ -15,3 +15,7 @@ pub const STORAGE_NEEDS: StorageNeeds<'static> = StorageNeeds {
     stream_prefixes: &[],
     secret_prefixes: &[],
 };
+
+#[cfg(test)]
+#[path = "storage_needs_tests.rs"]
+mod tests;
