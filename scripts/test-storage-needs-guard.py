@@ -14,7 +14,12 @@ SOURCE = (
     "git+https://github.com/tinyhumansai/tinystoragedrivers"
     f"?rev={REV}#{REV}"
 )
-PACKAGE_ID = f"{SOURCE}#tinystoragedrivers-bus@1.5.0"
+# Cargo package IDs use the opaque identity after the source's single '#'; the
+# resolved commit belongs in package.source, not as another package-ID fragment.
+PACKAGE_ID = (
+    "git+https://github.com/tinyhumansai/tinystoragedrivers"
+    f"?rev={REV}#tinystoragedrivers-bus@1.5.0"
+)
 ROOT_ID = "path+file:///proof#tinyjuice-storage-needs-consumer@0.1.0"
 
 
