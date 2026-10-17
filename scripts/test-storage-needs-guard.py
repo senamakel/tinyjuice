@@ -169,7 +169,7 @@ else:
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_missing_resolved_package_fails_closed(self):
-        result = self.run_guard(metadata_fixture(include_package=False), normal_graph="")
+        result = self.run_guard(metadata_fixture(include_package=False))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("exactly one storage bus package", result.stderr)
 
@@ -224,7 +224,7 @@ else:
         self.assertIn("optional storage TinyBus client", result.stderr)
 
     def test_dev_only_dependency_does_not_satisfy_normal_graph_proof(self):
-        result = self.run_guard(metadata_fixture(kind="dev"), normal_graph="")
+        result = self.run_guard(metadata_fixture(kind="dev"))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("normal consumer", result.stderr)
 
