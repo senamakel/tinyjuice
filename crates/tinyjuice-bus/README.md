@@ -21,12 +21,15 @@ prefix includes the trailing slash (`tinyjuice_ccr/`), matching the existing
 `tinyjuice_ccr_backup/`. Hosts can consume this declaration instead of
 restating its resources.
 
-The isolated consumer under `tests/storage-needs-consumer/` pins this metadata
-dependency in its own lockfile and verifies that a host needing only this
-contract does not acquire TinyBus. When changing the TinyJuice workspace
-version or the pinned `tinystoragedrivers-bus` revision, refresh the consumer
-lockfile in the same change; `scripts/test-features.sh` checks the locked
-consumer and its dependency graph.
+The isolated consumer under `tests/storage-needs-consumer/` directly pins the
+same canonical `tinystoragedrivers-bus` 1.5.0 revision as the workspace. Its
+return type names that crate directly, so compilation proves the re-export is
+the same Rust type; its test checks all four resource fields. The locked
+consumer also proves the resolved source and that a host needing only this
+contract does not acquire TinyBus or enable the optional storage client.
+When changing the TinyJuice workspace version or storage-bus revision, refresh
+the consumer lockfile in the same change; `scripts/test-features.sh` checks the
+locked consumer and its dependency graph.
 
 
 Contract 1.2 adds `Query(QueryRequest)` and `ExtractHtml(content)`. `Query`
