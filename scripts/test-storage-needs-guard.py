@@ -22,6 +22,7 @@ PACKAGE_ID = (
 )
 ROOT_ID = "path+file:///proof#tinyjuice-storage-needs-consumer@0.1.0"
 TINYJUICE_BUS_ID = "path+file:///tinyjuice/crates/tinyjuice-bus#tinyjuice-bus@0.10.6"
+SERDE_ID = "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.228"
 
 
 def package_id_for(source):
@@ -42,6 +43,19 @@ def storage_bus_dependency(*, source=SOURCE, kind=None, default_features=False):
     }
 
 
+def serde_dependency():
+    return {
+        "name": "serde",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "req": "^1.0",
+        "kind": None,
+        "target": None,
+        "optional": False,
+        "uses_default_features": True,
+        "features": ["derive"],
+    }
+
+
 def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
                      features=None, default_features=False, include_package=True,
                      package_id=PACKAGE_ID):
@@ -50,14 +64,21 @@ def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
         "name": "tinystoragedrivers-bus",
         "version": "1.5.0",
         "source": source,
-        "dependencies": [],
+        "dependencies": [serde_dependency()],
     }
     tinyjuice_bus = {
         "id": TINYJUICE_BUS_ID,
         "name": "tinyjuice-bus",
         "version": "0.10.6",
         "source": None,
-        "dependencies": [storage_bus_dependency()],
+        "dependencies": [storage_bus_dependency(), serde_dependency()],
+    }
+    serde_package = {
+        "id": SERDE_ID,
+        "name": "serde",
+        "version": "1.0.228",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "dependencies": [],
     }
     root = {
         "id": ROOT_ID,
@@ -78,11 +99,19 @@ def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
                                    default_features=default_features),
         ],
     }
-    bus_node = {"id": package_id, "features": features or [], "deps": []}
+    bus_node = {
+        "id": package_id,
+        "features": features or [],
+        "deps": [{"pkg": SERDE_ID, "dep_kinds": [{"kind": None, "target": None}]}],
+    }
     tinyjuice_bus_node = {
         "id": TINYJUICE_BUS_ID,
-        "deps": [{"pkg": PACKAGE_ID, "dep_kinds": [{"kind": None, "target": None}]}],
+        "deps": [
+            {"pkg": package_id, "dep_kinds": [{"kind": None, "target": None}]},
+            {"pkg": SERDE_ID, "dep_kinds": [{"kind": None, "target": None}]},
+        ],
     }
+    serde_node = {"id": SERDE_ID, "deps": []}
     root_node = {
         "id": ROOT_ID,
         "deps": [
@@ -90,8 +119,8 @@ def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
             {"pkg": package_id, "dep_kinds": [{"kind": kind, "target": None}]},
         ],
     }
-    packages = [root, tinyjuice_bus] + ([bus_package] if include_package else [])
-    nodes = [root_node, tinyjuice_bus_node] + ([bus_node] if include_package else [])
+    packages = [root, tinyjuice_bus, serde_package] + ([bus_package] if include_package else [])
+    nodes = [root_node, tinyjuice_bus_node, serde_node] + ([bus_node] if include_package else [])
     return {"packages": packages, "resolve": {"root": ROOT_ID, "nodes": nodes}}
 
 
@@ -154,6 +183,7 @@ else:
             normal_path.write_text(normal_graph if normal_graph is not None else
                                    "tinyjuice-storage-needs-consumer v0.1.0\n"
                                    "tinyjuice-bus v0.10.6 (/tinyjuice/crates/tinyjuice-bus)\n"
+                                   "serde v1.0.228 (registry)\n"
                                    "tinystoragedrivers-bus v1.5.0 (canonical source)\n",
                                    encoding="utf-8")
             feature_path = temp / "features.txt"
@@ -204,6 +234,13 @@ else:
             if node["id"] != TINYJUICE_BUS_ID
         ]
         cases.append(("TinyJuice bus node", missing_contract_node, None))
+
+        missing_transitive_node = metadata_fixture()
+        missing_transitive_node["resolve"]["nodes"] = [
+            node for node in missing_transitive_node["resolve"]["nodes"]
+            if node["id"] != SERDE_ID
+        ]
+        cases.append(("transitive node", missing_transitive_node, None))
 
         missing_edge = metadata_fixture()
         missing_edge["resolve"]["nodes"][0]["deps"] = []
@@ -270,6 +307,7 @@ else:
             normal_graph=(
                 "tinyjuice-storage-needs-consumer v0.1.0\n"
                 "tinyjuice-bus v0.10.6 (/tinyjuice/crates/tinyjuice-bus)\n"
+                "serde v1.0.228 (registry)\n"
                 "tinystoragedrivers-bus v1.5.0\ntinybus v0.1.7\n"
             ),
         )
