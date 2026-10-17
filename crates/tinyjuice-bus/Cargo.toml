@@ -4,7 +4,7 @@ name = "tinyjuice-bus"
 version = "0.10.5"
 edition = "2024"
 license = "GPL-3.0-only"
-description = "The TinyBus wire contract for TinyJuice: member names, payload types, and the contract version."
+description = "TinyJuice's transport-free bus and storage needs contracts."
 repository = "https://github.com/tinyhumansai/tinyjuice"
 readme = "README.md"
 keywords = ["tinybus", "compression", "tokens", "contract"]
@@ -19,6 +19,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Shared REPL error vocabulary; no execution dependencies.
 thiserror = "2"
+# Inherit the immutable, data-only storage schema pin from the workspace.
+tinystoragedrivers-bus = { workspace = true }
 
 [dev-dependencies]
 # Contract tests pin the JSON representation hosts exchange with the module.

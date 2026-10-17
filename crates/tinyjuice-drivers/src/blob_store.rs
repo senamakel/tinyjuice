@@ -48,14 +48,17 @@ impl BlobCcrStore {
             ));
         }
         let bridge = Blocking::new()?;
-        log::debug!("[tinyjuice_drivers] ccr blob store ready prefix={CCR_PREFIX} ttl={ttl:?}");
+        log::debug!(
+            "[tinyjuice_drivers] ccr blob store ready prefix={} ttl={ttl:?}",
+            tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]
+        );
         Ok(Self { blobs, bridge, ttl })
     }
 
     fn key(token: &str) -> Option<String> {
         // `short_hash` output is the only shape ever stored.
         (token.len() == short_hash("").len() && token.bytes().all(|b| b.is_ascii_hexdigit()))
-            .then(|| format!("{CCR_PREFIX}/{token}"))
+            .then(|| format!("{}{token}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]))
     }
 
     /// Remove an original; reports whether it existed.

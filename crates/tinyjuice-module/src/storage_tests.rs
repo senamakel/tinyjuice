@@ -57,7 +57,11 @@ async fn originals_land_as_blobs_on_the_host_port() -> TestResult {
     assert!(put.retained());
 
     let host_blobs = Arc::clone(rig.backend.for_scope(&Scope::local())?.blobs());
-    let key = format!("{}/{}", tinyjuice_drivers::CCR_PREFIX, short_hash(content));
+    let key = format!(
+        "{}{}",
+        tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0],
+        short_hash(content)
+    );
     let blob = host_blobs.get(&key).await?.ok_or("blob is on the host")?;
     assert_eq!(blob.bytes, content.as_bytes());
 
@@ -121,7 +125,7 @@ async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResu
     service.install(install_request(true)).await?;
     let content = "install wired durable tier fixture original";
     let token = tinyjuice::cache::offload(content);
-    let key = format!("{}/{token}", tinyjuice_drivers::CCR_PREFIX);
+    let key = format!("{}{token}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]);
     assert!(
         host_blobs.get(&key).await?.is_some(),
         "offload mirrored to host"
@@ -131,7 +135,7 @@ async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResu
     service.install(install_request(false)).await?;
     let memory_only = "install cleared durable tier fixture original";
     let token = tinyjuice::cache::offload(memory_only);
-    let key = format!("{}/{token}", tinyjuice_drivers::CCR_PREFIX);
+    let key = format!("{}{token}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]);
     assert!(host_blobs.get(&key).await?.is_none(), "nothing written");
     Ok(())
 }

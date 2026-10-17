@@ -31,6 +31,7 @@ fn faulty(storage: &MemoryStorage, ttl: bool) -> (Arc<dyn BlobStore>, Arc<Atomic
 fn an_original_round_trips_under_its_content_token() {
     let storage = MemoryStorage::new();
     let store = BlobCcrStore::new(handle(&storage), None).unwrap();
+    let declared_prefix = tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0];
     let put = store.put("hello world");
     assert!(put.retained());
     assert_eq!(put.token(), short_hash("hello world"));
@@ -39,12 +40,22 @@ fn an_original_round_trips_under_its_content_token() {
         .unwrap()
         .run({
             let blobs = handle(&storage);
-            async move { blobs.list(CCR_PREFIX).await }
+            async move { blobs.list(declared_prefix).await }
         })
         .unwrap()
         .unwrap();
     assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].key, format!("{CCR_PREFIX}/{}", put.token()));
+    assert_eq!(listed[0].key, format!("{declared_prefix}{}", put.token()));
+    assert!(store.delete(put.token()));
+    let remaining = tinystoragedrivers_core::Blocking::new()
+        .unwrap()
+        .run({
+            let blobs = handle(&storage);
+            async move { blobs.list(declared_prefix).await }
+        })
+        .unwrap()
+        .unwrap();
+    assert!(remaining.is_empty());
 }
 
 #[test]
@@ -165,6 +176,15 @@ fn delete_reports_whether_the_original_existed() {
     assert!(store.delete(put.token()));
     assert!(!store.delete(put.token()));
     assert_eq!(store.get(put.token()), None);
+}
+
+#[test]
+fn legacy_ccr_prefix_stays_without_the_grant_separator() {
+    assert_eq!(CCR_PREFIX, "tinyjuice_ccr");
+    assert_eq!(
+        tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0],
+        format!("{CCR_PREFIX}/")
+    );
 }
 
 #[test]
