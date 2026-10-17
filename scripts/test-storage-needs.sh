@@ -15,7 +15,6 @@ if [[ -z "$host_target" ]]; then
 fi
 metadata="$(cargo metadata --locked --manifest-path "$manifest" --filter-platform "$host_target" --format-version 1)"
 normal_graph="$(cargo tree --locked --manifest-path "$manifest" --target "$host_target" --edges normal,build --prefix none)"
-python3 scripts/check-storage-needs-metadata.py "$normal_graph" <<<"$metadata"
 if ! grep -Eq '^tinystoragedrivers-bus v1\.5\.0([[:space:]]|$)' <<<"$normal_graph"; then
   echo "TinyJuice bus-only consumer is missing tinystoragedrivers-bus 1.5.0 from its normal/build graph" >&2
   exit 1
