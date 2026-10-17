@@ -32,13 +32,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
                                     text=True, capture_output=True)
             return result, output.read_text() if output.exists() else ""
 
-    def test_default_manual_and_tag_events_route_to_main(self):
+    def test_manual_default_and_explicit_main_route_to_existing_release(self):
         self.assertIn("default: main", self.workflow)
-        self.assertIn("github.event_name == 'push' && 'main' || inputs.release_mode", self.workflow)
-        result, output = self.run_resolve()
+        result, output = self.run_resolve("main")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("release_mode=main", output)
         self.assertIn("reviewed_pr=0", output)
+        self.assertIn("github.event_name == 'push' && 'main' || inputs.release_mode", self.workflow)
+        self.assertIn("github.event_name == 'push' && github.ref_name || inputs.tag", self.workflow)
 
     def test_reviewed_epic_requires_and_forwards_positive_integer_pr(self):
         result, output = self.run_resolve("reviewed-epic", "91")
@@ -57,6 +58,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("reviewed_pr is only valid", result.stderr)
         self.assertIn("module-crate: tinyjuice-module", self.workflow)
+        self.assertIn("module-release.yml@3e87ade76b622844985d0c665a3b075313e4545c", self.workflow)
         self.assertIn("module-reviewed-epic-release.yml@837d0424c7f38e4293f41c795f12ed5eb5dd728", self.workflow)
         self.assertIn("reviewed-pr: ${{ fromJSON(needs.resolve.outputs.reviewed_pr) }}", self.workflow)
         self.assertNotIn("inputs.package", self.workflow)
