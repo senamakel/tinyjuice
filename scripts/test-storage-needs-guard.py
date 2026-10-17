@@ -72,7 +72,7 @@ class StorageNeedsGuardTests(unittest.TestCase):
         })
 
         self.assertEqual(root_manifest["package"]["version"], "0.10.6")
-        self.assertEqual(root_manifest["workspace"]["dependencies"]["tinyjuice-bus"]["version"], "0.10.6")
+        self.assertEqual(root_manifest["dependencies"]["tinyjuice-bus"]["version"], "0.10.6")
         for relative in ("crates/tinyjuice-bus/Cargo.toml", "crates/tinyjuice-module/Cargo.toml"):
             manifest = tomllib.loads((ROOT / relative).read_text())
             self.assertEqual(manifest["package"]["version"], "0.10.6")
