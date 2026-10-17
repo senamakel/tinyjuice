@@ -8,7 +8,7 @@ target_dir="$repo_root/target/storage-needs-proof"
 
 cargo test --locked --manifest-path "$manifest" --target-dir "$target_dir"
 
-normal_graph="$(cargo tree --locked --manifest-path "$manifest" --target-dir "$target_dir" --edges normal,build --prefix none)"
+normal_graph="$(cargo tree --locked --manifest-path "$manifest" --edges normal,build --prefix none)"
 if ! grep -Eq '^tinystoragedrivers-bus v1\.3\.0([[:space:]]|$)' <<<"$normal_graph"; then
   echo "TinyJuice bus-only consumer is missing tinystoragedrivers-bus 1.3.0" >&2
   exit 1
@@ -32,7 +32,7 @@ while IFS= read -r entry; do
   esac
 done <<<"$normal_graph"
 
-feature_graph="$(cargo tree --locked --manifest-path "$manifest" --target-dir "$target_dir" --edges features --invert tinystoragedrivers-bus)"
+feature_graph="$(cargo tree --locked --manifest-path "$manifest" --edges features --invert tinystoragedrivers-bus)"
 if grep -Fq 'tinystoragedrivers-bus feature "client"' <<<"$feature_graph"; then
   echo "TinyJuice bus-only consumer enabled the optional storage TinyBus client" >&2
   exit 1
