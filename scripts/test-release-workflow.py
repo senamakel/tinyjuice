@@ -95,7 +95,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         reviewed = job_block(self.workflow, "module-reviewed-epic-release")
         self.assertRegex(
             reviewed,
-            r"(?m)^    uses: tinyhumansai/\.github/\.github/workflows/module-reviewed-epic-release\.yml@837d0424c7f38e4293f41c795f12ed5eb5dd7280$",
+            r"(?m)^    uses: tinyhumansai/\.github/\.github/workflows/module-reviewed-epic-release\.yml@f1621b8709d9c7b68241cbec95925db470b6ee7f$",
         )
         self.assertRegex(
             job_block(self.workflow, "module-release"),
@@ -116,6 +116,31 @@ class ReleaseWorkflowTests(unittest.TestCase):
         })
         self.assertIn("extra-packaged-files: '[\"docs/specs/tinybus-module.md\"]'", ordinary)
         self.assertNotIn("extra-packaged-files:", reviewed)
+
+    def test_reviewed_owner_pin_keeps_fixed_tinyjuice_archive_profile(self):
+        reviewed = job_block(self.workflow, "module-reviewed-epic-release")
+        self.assertRegex(
+            reviewed,
+            r"(?ms)^    with:\n      tag: \$\{\{ needs\.resolve\.outputs\.tag \}\}\n"
+            r"      version: \$\{\{ needs\.resolve\.outputs\.version \}\}\n"
+            r"      reviewed-pr: \$\{\{ fromJSON\(needs\.resolve\.outputs\.reviewed_pr \|\| '0'\) \}\}\n$",
+        )
+        self.assertNotIn("module-crate:", reviewed)
+        self.assertNotIn("module-asset:", reviewed)
+
+        crate = "tinyjuice-module"
+        shell_builder = (ROOT / "scripts/build-module.sh").read_text()
+        powershell_builder = (ROOT / "scripts/build-module.ps1").read_text()
+        self.assertIn(f'[[ "$crate" == {crate} ', shell_builder)
+        self.assertIn(f"if ($Crate -ne '{crate}')", powershell_builder)
+        shell_template = re.search(r'^archive="\$output/(.+)"$', shell_builder, re.MULTILINE)
+        powershell_template = re.search(r'^\$archive = Join-Path \$outputPath "(.+)"$', powershell_builder, re.MULTILINE)
+        self.assertIsNotNone(shell_template)
+        self.assertIsNotNone(powershell_template)
+        shell_archive = shell_template.group(1).replace("${crate}", crate).replace("${version}", "0.10.6").replace("${host}", "ubuntu-22.04-x86_64")
+        powershell_archive = powershell_template.group(1).replace("$Crate", crate).replace("$Version", "0.10.6").replace("$HostKey", "windows-2022-x86_64")
+        self.assertEqual(shell_archive, "tinyjuice-module-0.10.6-ubuntu-22.04-x86_64.tar.gz")
+        self.assertEqual(powershell_archive, "tinyjuice-module-0.10.6-windows-2022-x86_64.zip")
 
 
 if __name__ == "__main__":
