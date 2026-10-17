@@ -24,6 +24,11 @@ ROOT_ID = "path+file:///proof#tinyjuice-storage-needs-consumer@0.1.0"
 TINYJUICE_BUS_ID = "path+file:///tinyjuice/crates/tinyjuice-bus#tinyjuice-bus@0.10.6"
 
 
+def package_id_for(source):
+    source_spec = source.partition("#")[0]
+    return f"{source_spec}#tinystoragedrivers-bus@1.5.0"
+
+
 def storage_bus_dependency(*, source=SOURCE, kind=None, default_features=False):
     return {
         "name": "tinystoragedrivers-bus",
@@ -38,9 +43,10 @@ def storage_bus_dependency(*, source=SOURCE, kind=None, default_features=False):
 
 
 def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
-                     features=None, default_features=False, include_package=True):
+                     features=None, default_features=False, include_package=True,
+                     package_id=PACKAGE_ID):
     bus_package = {
-        "id": PACKAGE_ID,
+        "id": package_id,
         "name": "tinystoragedrivers-bus",
         "version": "1.5.0",
         "source": source,
@@ -72,7 +78,7 @@ def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
                                    default_features=default_features),
         ],
     }
-    bus_node = {"id": PACKAGE_ID, "features": features or [], "deps": []}
+    bus_node = {"id": package_id, "features": features or [], "deps": []}
     tinyjuice_bus_node = {
         "id": TINYJUICE_BUS_ID,
         "deps": [{"pkg": PACKAGE_ID, "dep_kinds": [{"kind": None, "target": None}]}],
@@ -81,7 +87,7 @@ def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
         "id": ROOT_ID,
         "deps": [
             {"pkg": TINYJUICE_BUS_ID, "dep_kinds": [{"kind": None, "target": None}]},
-            {"pkg": PACKAGE_ID, "dep_kinds": [{"kind": kind, "target": None}]},
+            {"pkg": package_id, "dep_kinds": [{"kind": kind, "target": None}]},
         ],
     }
     packages = [root, tinyjuice_bus] + ([bus_package] if include_package else [])
@@ -192,6 +198,13 @@ else:
         ]
         cases.append(("storage bus node", missing_bus_node, None))
 
+        missing_contract_node = metadata_fixture()
+        missing_contract_node["resolve"]["nodes"] = [
+            node for node in missing_contract_node["resolve"]["nodes"]
+            if node["id"] != TINYJUICE_BUS_ID
+        ]
+        cases.append(("TinyJuice bus node", missing_contract_node, None))
+
         missing_edge = metadata_fixture()
         missing_edge["resolve"]["nodes"][0]["deps"] = []
         cases.append(("direct edge", missing_edge, None))
@@ -204,12 +217,26 @@ else:
         self.assertNotEqual(result.returncode, 0)
 
     def test_wrong_source_revision_or_tag_fails_closed(self):
-        for source in (
-            SOURCE.replace(REV, "08caa16d1d4e3c6b8d649e4f26fe1a426ee1d168"),
-            SOURCE.replace(f"?rev={REV}", "?tag=v1.5.0"),
+        wrong_revision = "08caa16d1d4e3c6b8d649e4f26fe1a426ee1d168"
+        wrong_revision_source = (
+            "git+https://github.com/tinyhumansai/tinystoragedrivers"
+            f"?rev={wrong_revision}#{wrong_revision}"
+        )
+        tag_source = (
+            "git+https://github.com/tinyhumansai/tinystoragedrivers"
+            f"?tag=v1.5.0#{REV}"
+        )
+        for dependency_source, resolved_source in (
+            (wrong_revision_source, wrong_revision_source),
+            (tag_source, tag_source),
+            (SOURCE, wrong_revision_source),
         ):
-            with self.subTest(source=source):
-                result = self.run_guard(metadata_fixture(source=source, dependency_source=source))
+            with self.subTest(source=dependency_source, resolved=resolved_source):
+                result = self.run_guard(metadata_fixture(
+                    source=resolved_source,
+                    dependency_source=dependency_source,
+                    package_id=package_id_for(resolved_source),
+                ))
                 self.assertNotEqual(result.returncode, 0)
 
     def test_client_feature_is_rejected_in_metadata_or_feature_graph(self):
