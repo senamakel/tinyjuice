@@ -18,7 +18,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Test release routing and input guards
-        run: python3 scripts/test-release-workflow.py
+        run: |
+          python3 scripts/test-release-workflow.py
+          python3 scripts/test-storage-needs-guard.py
   module-ci:
     uses: tinyhumansai/.github/.github/workflows/module-ci.yml@3e87ade76b622844985d0c665a3b075313e4545c
     with:

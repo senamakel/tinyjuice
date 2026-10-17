@@ -42,7 +42,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             output = Path(directory) / "output"
             env = dict(os.environ, TAG="v1.2.3", RELEASE_MODE=mode,
                        REVIEWED_PR=reviewed_pr, GITHUB_OUTPUT=str(output))
-            result = subprocess.run(["bash", "-c", self.script], env=env,
+            result = subprocess.run(["bash", "-c", self.script], cwd=directory, env=env,
                                     text=True, capture_output=True)
             return result, output.read_text() if output.exists() else ""
 
@@ -50,15 +50,24 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("default: main", self.workflow)
         result, output = self.run_resolve("main")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("release_mode=main", output)
-        self.assertIn("reviewed_pr=0", output)
+        self.assertEqual(dict(line.split("=", 1) for line in output.splitlines()), {
+            "tag": "v1.2.3",
+            "version": "1.2.3",
+            "release_mode": "main",
+            "reviewed_pr": "0",
+        })
         self.assertIn("github.event_name == 'push' && 'main' || inputs.release_mode", self.workflow)
         self.assertIn("github.event_name == 'push' && github.ref_name || inputs.tag", self.workflow)
 
     def test_reviewed_epic_requires_and_forwards_positive_integer_pr(self):
         result, output = self.run_resolve("reviewed-epic", "91")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("reviewed_pr=91", output)
+        self.assertEqual(dict(line.split("=", 1) for line in output.splitlines()), {
+            "tag": "v1.2.3",
+            "version": "1.2.3",
+            "release_mode": "reviewed-epic",
+            "reviewed_pr": "91",
+        })
 
     def test_reviewed_epic_rejects_missing_zero_and_non_integer_prs(self):
         for value in ("", "0", "-1", "1.5", "abc"):
@@ -72,7 +81,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("reviewed_pr is only valid", result.stderr)
         self.assertIn("module-crate: tinyjuice-module", self.workflow)
-        self.assertIn("reviewed-pr: ${{ fromJSON(needs.resolve.outputs.reviewed_pr) }}", self.workflow)
+        self.assertIn("reviewed-pr: ${{ fromJSON(needs.resolve.outputs.reviewed_pr || '0') }}", self.workflow)
         self.assertNotIn("inputs.package", self.workflow)
         self.assertNotIn("inputs.repo", self.workflow)
 
@@ -88,6 +97,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
             reviewed,
             r"(?m)^    uses: tinyhumansai/\.github/\.github/workflows/module-reviewed-epic-release\.yml@837d0424c7f38e4293f41c795f12ed5eb5dd7280$",
         )
+        self.assertRegex(
+            job_block(self.workflow, "module-release"),
+            r"(?m)^    uses: tinyhumansai/\.github/\.github/workflows/module-release\.yml@3e87ade76b622844985d0c665a3b075313e4545c$",
+        )
 
     def test_release_routes_are_exclusive_and_permissions_are_minimal(self):
         ordinary = job_block(self.workflow, "module-release")
@@ -101,6 +114,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "checks": "read",
             "actions": "read",
         })
+        self.assertIn("extra-packaged-files: '[\"docs/specs/tinybus-module.md\"]'", ordinary)
+        self.assertNotIn("extra-packaged-files:", reviewed)
 
 
 if __name__ == "__main__":
