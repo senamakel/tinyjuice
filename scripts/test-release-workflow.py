@@ -92,8 +92,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_release_routes_are_exclusive_and_permissions_are_minimal(self):
         ordinary = job_block(self.workflow, "module-release")
         reviewed = job_block(self.workflow, "module-reviewed-epic-release")
-        self.assertRegex(ordinary, r"(?m)^    if: needs\.resolve\.outputs\.release_mode == 'main'$ ")
-        self.assertRegex(reviewed, r"(?m)^    if: needs\.resolve\.outputs\.release_mode == 'reviewed-epic'$ ")
+        self.assertRegex(ordinary, r"(?m)^    if: needs\.resolve\.outputs\.release_mode == 'main'$")
+        self.assertRegex(reviewed, r"(?m)^    if: needs\.resolve\.outputs\.release_mode == 'reviewed-epic'$")
         self.assertEqual(job_permissions(ordinary), {"contents": "write"})
         self.assertEqual(job_permissions(reviewed), {
             "contents": "write",
