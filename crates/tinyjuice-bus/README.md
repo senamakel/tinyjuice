@@ -23,10 +23,10 @@ restating its resources.
 
 The isolated consumer under `tests/storage-needs-consumer/` pins this metadata
 dependency in its own lockfile and verifies that a host needing only this
-contract does not acquire TinyBus. When upgrading the storage schema, update
-the pinned `tinystoragedrivers-bus` release and refresh the consumer lockfile in
-the same change; `scripts/test-features.sh` checks the locked consumer and its
-dependency graph.
+contract does not acquire TinyBus. When changing the TinyJuice workspace
+version or the pinned `tinystoragedrivers-bus` revision, refresh the consumer
+lockfile in the same change; `scripts/test-features.sh` checks the locked
+consumer and its dependency graph.
 
 
 Contract 1.2 adds `Query(QueryRequest)` and `ExtractHtml(content)`. `Query`
