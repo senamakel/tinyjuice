@@ -21,6 +21,20 @@ PACKAGE_ID = (
     f"?rev={REV}#tinystoragedrivers-bus@1.5.0"
 )
 ROOT_ID = "path+file:///proof#tinyjuice-storage-needs-consumer@0.1.0"
+TINYJUICE_BUS_ID = "path+file:///tinyjuice/crates/tinyjuice-bus#tinyjuice-bus@0.10.6"
+
+
+def storage_bus_dependency(*, source=SOURCE, kind=None, default_features=False):
+    return {
+        "name": "tinystoragedrivers-bus",
+        "source": source,
+        "req": "=1.5.0",
+        "kind": kind,
+        "target": None,
+        "optional": False,
+        "uses_default_features": default_features,
+        "features": [],
+    }
 
 
 def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
@@ -32,31 +46,46 @@ def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
         "source": source,
         "dependencies": [],
     }
+    tinyjuice_bus = {
+        "id": TINYJUICE_BUS_ID,
+        "name": "tinyjuice-bus",
+        "version": "0.10.6",
+        "source": None,
+        "dependencies": [storage_bus_dependency()],
+    }
     root = {
         "id": ROOT_ID,
         "name": "tinyjuice-storage-needs-consumer",
         "version": "0.1.0",
-        "dependencies": [{
-            "name": "tinystoragedrivers-bus",
-            "source": dependency_source or SOURCE,
-            "req": "=1.5.0",
-            "kind": kind,
-            "target": None,
-            "optional": False,
-            "uses_default_features": default_features,
-            "features": [],
-        }],
+        "dependencies": [
+            {
+                "name": "tinyjuice-bus",
+                "source": None,
+                "req": "*",
+                "kind": None,
+                "target": None,
+                "optional": False,
+                "uses_default_features": True,
+                "features": [],
+            },
+            storage_bus_dependency(source=dependency_source or SOURCE, kind=kind,
+                                   default_features=default_features),
+        ],
     }
     bus_node = {"id": PACKAGE_ID, "features": features or [], "deps": []}
+    tinyjuice_bus_node = {
+        "id": TINYJUICE_BUS_ID,
+        "deps": [{"pkg": PACKAGE_ID, "dep_kinds": [{"kind": None, "target": None}]}],
+    }
     root_node = {
         "id": ROOT_ID,
-        "deps": [{
-            "pkg": PACKAGE_ID,
-            "dep_kinds": [{"kind": kind, "target": None}],
-        }],
+        "deps": [
+            {"pkg": TINYJUICE_BUS_ID, "dep_kinds": [{"kind": None, "target": None}]},
+            {"pkg": PACKAGE_ID, "dep_kinds": [{"kind": kind, "target": None}]},
+        ],
     }
-    packages = [root] + ([bus_package] if include_package else [])
-    nodes = [root_node] + ([bus_node] if include_package else [])
+    packages = [root, tinyjuice_bus] + ([bus_package] if include_package else [])
+    nodes = [root_node, tinyjuice_bus_node] + ([bus_node] if include_package else [])
     return {"packages": packages, "resolve": {"root": ROOT_ID, "nodes": nodes}}
 
 
@@ -110,10 +139,15 @@ else:
     raise SystemExit("unexpected fake cargo invocation: " + " ".join(args))
 """)
             cargo.chmod(0o755)
+            rustc = temp / "rustc"
+            rustc.write_text("#!/usr/bin/env bash\nprintf 'host: x86_64-unknown-linux-gnu\\n'\n")
+            rustc.chmod(0o755)
             metadata_path = temp / "metadata.json"
             metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
             normal_path = temp / "normal.txt"
             normal_path.write_text(normal_graph if normal_graph is not None else
+                                   "tinyjuice-storage-needs-consumer v0.1.0\n"
+                                   "tinyjuice-bus v0.10.6 (/tinyjuice/crates/tinyjuice-bus)\n"
                                    "tinystoragedrivers-bus v1.5.0 (canonical source)\n",
                                    encoding="utf-8")
             feature_path = temp / "features.txt"
@@ -138,6 +172,36 @@ else:
         result = self.run_guard(metadata_fixture(include_package=False), normal_graph="")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("exactly one storage bus package", result.stderr)
+
+    def test_missing_root_node_bus_node_edge_or_tree_evidence_fails_closed(self):
+        cases = []
+        missing_root = metadata_fixture()
+        missing_root["packages"] = [package for package in missing_root["packages"]
+                                     if package["id"] != ROOT_ID]
+        cases.append(("root package", missing_root, None))
+
+        missing_root_node = metadata_fixture()
+        missing_root_node["resolve"]["nodes"] = [
+            node for node in missing_root_node["resolve"]["nodes"] if node["id"] != ROOT_ID
+        ]
+        cases.append(("root node", missing_root_node, None))
+
+        missing_bus_node = metadata_fixture()
+        missing_bus_node["resolve"]["nodes"] = [
+            node for node in missing_bus_node["resolve"]["nodes"] if node["id"] != PACKAGE_ID
+        ]
+        cases.append(("storage bus node", missing_bus_node, None))
+
+        missing_edge = metadata_fixture()
+        missing_edge["resolve"]["nodes"][0]["deps"] = []
+        cases.append(("direct edge", missing_edge, None))
+
+        for label, metadata, normal_graph in cases:
+            with self.subTest(label=label):
+                result = self.run_guard(metadata, normal_graph=normal_graph)
+                self.assertNotEqual(result.returncode, 0)
+        result = self.run_guard(metadata_fixture(), normal_graph="")
+        self.assertNotEqual(result.returncode, 0)
 
     def test_wrong_source_revision_or_tag_fails_closed(self):
         for source in (
@@ -172,7 +236,11 @@ else:
     def test_forbidden_build_dependency_is_rejected(self):
         result = self.run_guard(
             metadata_fixture(),
-            normal_graph="tinystoragedrivers-bus v1.5.0\ntinybus v0.1.7\n",
+            normal_graph=(
+                "tinyjuice-storage-needs-consumer v0.1.0\n"
+                "tinyjuice-bus v0.10.6 (/tinyjuice/crates/tinyjuice-bus)\n"
+                "tinystoragedrivers-bus v1.5.0\ntinybus v0.1.7\n"
+            ),
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unexpectedly depends on tinybus", result.stderr)

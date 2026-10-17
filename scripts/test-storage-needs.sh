@@ -8,10 +8,14 @@ target_dir="$repo_root/target/storage-needs-proof"
 
 cargo test --locked --manifest-path "$manifest" --target-dir "$target_dir"
 
-metadata="$(cargo metadata --locked --manifest-path "$manifest" --format-version 1)"
-python3 scripts/check-storage-needs-metadata.py <<<"$metadata"
-
-normal_graph="$(cargo tree --locked --manifest-path "$manifest" --edges normal,build --prefix none)"
+host_target="$(rustc -vV | sed -n 's/^host: //p')"
+if [[ -z "$host_target" ]]; then
+  echo "could not determine the Rust host target for storage-needs graph verification" >&2
+  exit 1
+fi
+metadata="$(cargo metadata --locked --manifest-path "$manifest" --filter-platform "$host_target" --format-version 1)"
+normal_graph="$(cargo tree --locked --manifest-path "$manifest" --target "$host_target" --edges normal,build --prefix none)"
+python3 scripts/check-storage-needs-metadata.py "$normal_graph" <<<"$metadata"
 if ! grep -Eq '^tinystoragedrivers-bus v1\.5\.0([[:space:]]|$)' <<<"$normal_graph"; then
   echo "TinyJuice bus-only consumer is missing tinystoragedrivers-bus 1.5.0 from its normal/build graph" >&2
   exit 1
@@ -35,7 +39,9 @@ while IFS= read -r entry; do
   esac
 done <<<"$normal_graph"
 
-feature_graph="$(cargo tree --locked --manifest-path "$manifest" --edges features --invert tinystoragedrivers-bus)"
+python3 scripts/check-storage-needs-metadata.py "$normal_graph" <<<"$metadata"
+
+feature_graph="$(cargo tree --locked --manifest-path "$manifest" --target "$host_target" --edges features --invert tinystoragedrivers-bus)"
 if ! grep -Fq 'tinystoragedrivers-bus v1.5.0' <<<"$feature_graph"; then
   echo "TinyJuice bus-only consumer feature graph is missing tinystoragedrivers-bus 1.5.0" >&2
   exit 1

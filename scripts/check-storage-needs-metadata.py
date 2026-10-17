@@ -10,6 +10,11 @@ SOURCE = (
     "#c9ea6ff1615b77b55d7269403af5fd11bedc9ce8"
 )
 REV = "c9ea6ff1615b77b55d7269403af5fd11bedc9ce8"
+DEPENDENCY_SOURCE = (
+    "git+https://github.com/tinyhumansai/tinystoragedrivers"
+    f"?rev={REV}"
+)
+PACKAGE_ID = f"{DEPENDENCY_SOURCE}#tinystoragedrivers-bus@1.5.0"
 
 
 def fail(message: str) -> None:
@@ -29,6 +34,8 @@ def main() -> None:
 
     root_id = resolve.get("root")
     by_id = {package.get("id"): package for package in packages if isinstance(package, dict)}
+    if len(by_id) != len(packages) or None in by_id:
+        fail("Cargo metadata contains a package without a unique package ID")
     root = by_id.get(root_id)
     if root is None or root.get("name") != "tinyjuice-storage-needs-consumer":
         fail("the isolated consumer root package is missing")
@@ -39,11 +46,8 @@ def main() -> None:
         fail("the isolated consumer must directly declare exactly one storage bus dependency")
     dependency = direct[0]
     source = dependency.get("source") or ""
-    if not source.startswith(f"git+https://github.com/tinyhumansai/tinystoragedrivers?rev={REV}"):
+    if source not in (DEPENDENCY_SOURCE, SOURCE):
         fail("the direct dependency does not pin the canonical source by the expected revision")
-    fragment = source.partition("#")[2]
-    if fragment and fragment != REV:
-        fail("the direct dependency source resolved to a different commit")
     if dependency.get("req") != "=1.5.0":
         fail("the direct dependency must require exactly tinystoragedrivers-bus 1.5.0")
     if dependency.get("uses_default_features") is not False:
@@ -58,15 +62,16 @@ def main() -> None:
     if len(matches) != 1:
         fail("Cargo metadata must resolve exactly one storage bus package")
     package = matches[0]
-    package_id = f"{SOURCE}#tinystoragedrivers-bus@1.5.0"
     if (package.get("version") != "1.5.0" or package.get("source") != SOURCE
-            or package.get("id") != package_id):
+            or package.get("id") != PACKAGE_ID):
         fail("the resolved storage bus package did not match the canonical 1.5.0 source SHA")
 
     nodes = resolve.get("nodes")
     if not isinstance(nodes, list):
         fail("Cargo metadata omitted the resolved dependency graph")
     nodes_by_id = {node.get("id"): node for node in nodes if isinstance(node, dict)}
+    if len(nodes_by_id) != len(nodes) or None in nodes_by_id:
+        fail("Cargo metadata contains a node without a unique package ID")
     root_node = nodes_by_id.get(root_id)
     bus_node = nodes_by_id.get(package.get("id"))
     if root_node is None or bus_node is None:
@@ -81,6 +86,44 @@ def main() -> None:
         fail("the canonical storage bus is only present as a dev-only dependency")
     if bus_node.get("features") != []:
         fail("the storage bus resolved an unexpected feature, including its optional TinyBus client")
+
+    reachable = set()
+    pending = [root_id]
+    while pending:
+        package_id = pending.pop()
+        if package_id in reachable:
+            continue
+        if package_id not in by_id or package_id not in nodes_by_id:
+            fail("the normal/build dependency closure references a missing package or node")
+        reachable.add(package_id)
+        dependencies = nodes_by_id[package_id].get("deps")
+        if not isinstance(dependencies, list):
+            fail("a package node omitted its dependency-edge evidence")
+        for item in dependencies:
+            if not isinstance(item, dict) or not isinstance(item.get("pkg"), str):
+                fail("Cargo metadata contains an incomplete dependency edge")
+            dep_kinds = item.get("dep_kinds")
+            if not isinstance(dep_kinds, list) or not dep_kinds:
+                fail("Cargo metadata omitted dependency-kind evidence")
+            if any(kind.get("kind") in (None, "normal", "build")
+                   for kind in dep_kinds if isinstance(kind, dict)):
+                pending.append(item["pkg"])
+
+    tree = sys.argv[1] if len(sys.argv) == 2 else ""
+    tree_packages = set()
+    for line in tree.splitlines():
+        fields = line.strip().split()
+        if len(fields) < 2 or not fields[1].startswith("v"):
+            fail("the normal/build Cargo tree contains an incomplete package row")
+        tree_packages.add((fields[0], fields[1][1:]))
+    if not tree_packages:
+        fail("the normal/build Cargo tree is missing")
+    metadata_packages = {
+        (by_id[package_id]["name"], by_id[package_id]["version"])
+        for package_id in reachable
+    }
+    if tree_packages != metadata_packages:
+        fail("the normal/build Cargo tree does not match the complete metadata closure")
 
 
 if __name__ == "__main__":
