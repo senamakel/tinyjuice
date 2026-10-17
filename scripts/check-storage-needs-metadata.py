@@ -58,7 +58,9 @@ def main() -> None:
     if len(matches) != 1:
         fail("Cargo metadata must resolve exactly one storage bus package")
     package = matches[0]
-    if package.get("version") != "1.5.0" or package.get("source") != SOURCE:
+    package_id = f"{SOURCE}#tinystoragedrivers-bus@1.5.0"
+    if (package.get("version") != "1.5.0" or package.get("source") != SOURCE
+            or package.get("id") != package_id):
         fail("the resolved storage bus package did not match the canonical 1.5.0 source SHA")
 
     nodes = resolve.get("nodes")
@@ -77,8 +79,8 @@ def main() -> None:
     if not any(item.get("kind") in (None, "normal", "build")
                for item in kinds if isinstance(item, dict)):
         fail("the canonical storage bus is only present as a dev-only dependency")
-    if "client" in bus_node.get("features", []):
-        fail("the optional storage TinyBus client feature is enabled")
+    if bus_node.get("features") != []:
+        fail("the storage bus resolved an unexpected feature, including its optional TinyBus client")
 
 
 if __name__ == "__main__":

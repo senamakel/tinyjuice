@@ -19,7 +19,7 @@ ROOT_ID = "path+file:///proof#tinyjuice-storage-needs-consumer@0.1.0"
 
 
 def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
-                     features=None, include_package=True):
+                     features=None, default_features=False, include_package=True):
     bus_package = {
         "id": PACKAGE_ID,
         "name": "tinystoragedrivers-bus",
@@ -38,7 +38,7 @@ def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
             "kind": kind,
             "target": None,
             "optional": False,
-            "uses_default_features": False,
+            "uses_default_features": default_features,
             "features": [],
         }],
     }
@@ -146,7 +146,7 @@ else:
     def test_client_feature_is_rejected_in_metadata_or_feature_graph(self):
         result = self.run_guard(metadata_fixture(features=["client"]))
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("optional storage TinyBus client", result.stderr)
+        self.assertIn("unexpected feature", result.stderr)
         result = self.run_guard(
             metadata_fixture(),
             feature_graph='tinystoragedrivers-bus v1.5.0\ntinystoragedrivers-bus feature "client"\n',
@@ -158,6 +158,11 @@ else:
         result = self.run_guard(metadata_fixture(kind="dev"), normal_graph="")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("normal consumer", result.stderr)
+
+    def test_default_features_cannot_silently_enable_the_optional_client(self):
+        result = self.run_guard(metadata_fixture(default_features=True))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("disable default features", result.stderr)
 
     def test_forbidden_build_dependency_is_rejected(self):
         result = self.run_guard(
