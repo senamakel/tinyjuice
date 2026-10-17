@@ -16,6 +16,7 @@ pub mod names;
 pub mod repl;
 pub mod savings;
 pub mod summary;
+mod storage_needs;
 pub mod tools;
 pub mod types;
 pub mod version;
@@ -27,6 +28,7 @@ pub use types::{
     ContentKind, LlmSummaryMode,
 };
 pub use version::{CONTRACT_VERSION, is_compatible};
+pub use storage_needs::STORAGE_NEEDS;
 pub use wire::{
     CacheStats, CompactRequest, CompactResponse, GenerateRequest, InstallRequest, RangeUnit,
     RetrieveRange,
@@ -35,3 +37,7 @@ pub use wire::{
 #[cfg(test)]
 #[path = "lib_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "storage_needs_tests.rs"]
+mod storage_needs_tests;
