@@ -16,7 +16,16 @@ fi
 while IFS= read -r entry; do
   package="${entry%% *}"
   case "$package" in
-    tinybus|tinybus-*|tokio|tokio-*|async-std|async-std-*|smol|smol-*|reqwest|ureq|isahc|curl|hyper|hyper-*|http|http-body|http-body-util|tower|tower-*|axum|actix-web|sqlx|diesel|sea-orm|sea-orm-*|rusqlite|libsqlite3-sys|mongodb|bson|mysql|postgres|redis|sled|redb|rocksdb|librocksdb-sys|tinystoragedrivers|tinystoragedrivers-core|tinystoragedrivers-client|tinystoragedrivers-busproxy|tinystoragedrivers-secrets|tinystoragedrivers-tinybus|tinystoragedrivers-sqlite|tinystoragedrivers-file|tinystoragedrivers-mongodb|tinystoragedrivers-s3|tinyjuice|tinyjuice-module|tinyjuice-drivers)
+    tinybus|tinybus-*|tokio|tokio-*|async-std|async-std-*|smol|smol-*|\
+      reqwest|ureq|isahc|curl|hyper|hyper-*|http|http-body|http-body-util|\
+      tower|tower-*|axum|actix-web|sqlx|diesel|sea-orm|sea-orm-*|\
+      rusqlite|libsqlite3-sys|mongodb|bson|mysql|postgres|redis|sled|redb|\
+      rocksdb|librocksdb-sys|tinystoragedrivers|tinystoragedrivers-core|\
+      tinystoragedrivers-client|tinystoragedrivers-busproxy|\
+      tinystoragedrivers-secrets|tinystoragedrivers-tinybus|\
+      tinystoragedrivers-sqlite|tinystoragedrivers-file|\
+      tinystoragedrivers-mongodb|tinystoragedrivers-s3|\
+      tinyjuice|tinyjuice-module|tinyjuice-drivers)
       echo "TinyJuice bus-only consumer unexpectedly depends on $package" >&2
       exit 1
       ;;
