@@ -15,21 +15,21 @@ pub mod handle;
 pub mod names;
 pub mod repl;
 pub mod savings;
-pub mod summary;
 mod storage_needs;
+pub mod summary;
 pub mod tools;
 pub mod types;
 pub mod version;
 pub mod wire;
 
 pub use names::{BUS_NAME, METHODS, ML_HOST_NAME, ML_HOST_PATH, OBJECT_PATH};
+pub use storage_needs::STORAGE_NEEDS;
 pub use tinystoragedrivers_bus::StorageNeeds;
 pub use types::{
     AgentTokenjuiceCompression, CompressOptions, CompressedOutput, CompressorKind, ContentHint,
     ContentKind, LlmSummaryMode,
 };
 pub use version::{CONTRACT_VERSION, is_compatible};
-pub use storage_needs::STORAGE_NEEDS;
 pub use wire::{
     CacheStats, CompactRequest, CompactResponse, GenerateRequest, InstallRequest, RangeUnit,
     RetrieveRange,
