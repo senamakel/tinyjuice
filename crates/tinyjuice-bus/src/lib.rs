@@ -23,6 +23,7 @@ pub mod version;
 pub mod wire;
 
 pub use names::{BUS_NAME, METHODS, ML_HOST_NAME, ML_HOST_PATH, OBJECT_PATH};
+pub use tinystoragedrivers_bus::StorageNeeds;
 pub use types::{
     AgentTokenjuiceCompression, CompressOptions, CompressedOutput, CompressorKind, ContentHint,
     ContentKind, LlmSummaryMode,

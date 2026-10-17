@@ -1,6 +1,6 @@
 //! Host-grantable resources required by TinyJuice.
 
-use tinystoragedrivers_bus::StorageNeeds;
+use crate::StorageNeeds;
 
 /// Blob namespace for CCR originals. The trailing slash keeps grants scoped to
 /// the existing `tinyjuice_ccr/<token>` keys without matching sibling names.
