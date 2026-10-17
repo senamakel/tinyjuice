@@ -9,6 +9,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  release-workflow-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Test release routing and input guards
+        run: |
+          python3 scripts/test-release-workflow.py
+          python3 scripts/test-storage-needs-guard.py
   module-ci:
     uses: tinyhumansai/.github/.github/workflows/module-ci.yml@3e87ade76b622844985d0c665a3b075313e4545c
     with:

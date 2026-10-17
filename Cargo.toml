@@ -1,7 +1,7 @@
 [package]
 rust-version = "1.88"
 name = "tinyjuice"
-version = "0.10.5"
+version = "0.10.6"
 edition = "2024"
 license = "GPL-3.0-only"
 description = "Pluggable token compression for OpenHuman."
@@ -30,7 +30,7 @@ resolver = "3"
 # Pure hosts consume the storage schema without enabling its optional TinyBus
 # compatibility client. Keep this revision aligned with the TinyJuice bus
 # contract and its isolated, locked consumer proof.
-tinystoragedrivers-bus = { version = "=1.3.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "08caa16d1d4e3c6b8d649e4f26fe1a426ee1d168", default-features = false }
+tinystoragedrivers-bus = { version = "=1.5.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "c9ea6ff1615b77b55d7269403af5fd11bedc9ce8", default-features = false }
 
 [dependencies]
 # Optional adapter boundary: REPL ops as `tinytools::Tool` impls.
@@ -43,7 +43,7 @@ jaq-json = { version = "2", optional = true }
 # The wire contract, defined once and shared with the module and with hosts.
 # This crate re-exports its types from `src/types.rs` rather than declaring a
 # second copy — see the note there.
-tinyjuice-bus = { version = "0.10.4", path = "crates/tinyjuice-bus" }
+tinyjuice-bus = { version = "0.10.6", path = "crates/tinyjuice-bus" }
 async-trait = "0.1"
 dirs = "7"
 hex = "0.4"
