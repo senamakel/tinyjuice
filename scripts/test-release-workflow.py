@@ -17,6 +17,20 @@ def resolve_script(workflow):
     return "\n".join(line[10:] if line.startswith("          ") else "" for line in match[1].splitlines())
 
 
+def job_block(workflow, name):
+    match = re.search(rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)", workflow)
+    if not match:
+        raise AssertionError(f"release job {name} was not found")
+    return match[1]
+
+
+def job_permissions(block):
+    match = re.search(r"(?ms)^    permissions:\n((?:^      [a-z-]+: [a-z]+\n)+)", block)
+    if not match:
+        raise AssertionError("job permissions were not found")
+    return dict(re.findall(r"(?m)^      ([a-z-]+): ([a-z]+)$", match[1]))
+
+
 class ReleaseWorkflowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -58,11 +72,35 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("reviewed_pr is only valid", result.stderr)
         self.assertIn("module-crate: tinyjuice-module", self.workflow)
-        self.assertIn("module-release.yml@3e87ade76b622844985d0c665a3b075313e4545c", self.workflow)
-        self.assertIn("module-reviewed-epic-release.yml@837d0424c7f38e4293f41c795f12ed5eb5dd728", self.workflow)
         self.assertIn("reviewed-pr: ${{ fromJSON(needs.resolve.outputs.reviewed_pr) }}", self.workflow)
         self.assertNotIn("inputs.package", self.workflow)
         self.assertNotIn("inputs.repo", self.workflow)
+
+    def test_every_shared_workflow_uses_a_full_commit_pin(self):
+        refs = re.findall(
+            r"(?m)^\s+uses: tinyhumansai/\.github/\.github/workflows/[^@\s]+@([0-9a-f]+)\s*$",
+            self.workflow,
+        )
+        self.assertGreaterEqual(len(refs), 2)
+        self.assertTrue(all(len(ref) == 40 for ref in refs), refs)
+        reviewed = job_block(self.workflow, "module-reviewed-epic-release")
+        self.assertRegex(
+            reviewed,
+            r"(?m)^    uses: tinyhumansai/\.github/\.github/workflows/module-reviewed-epic-release\.yml@837d0424c7f38e4293f41c795f12ed5eb5dd7280$",
+        )
+
+    def test_release_routes_are_exclusive_and_permissions_are_minimal(self):
+        ordinary = job_block(self.workflow, "module-release")
+        reviewed = job_block(self.workflow, "module-reviewed-epic-release")
+        self.assertRegex(ordinary, r"(?m)^    if: needs\.resolve\.outputs\.release_mode == 'main'$ ")
+        self.assertRegex(reviewed, r"(?m)^    if: needs\.resolve\.outputs\.release_mode == 'reviewed-epic'$ ")
+        self.assertEqual(job_permissions(ordinary), {"contents": "write"})
+        self.assertEqual(job_permissions(reviewed), {
+            "contents": "write",
+            "pull-requests": "read",
+            "checks": "read",
+            "actions": "read",
+        })
 
 
 if __name__ == "__main__":
