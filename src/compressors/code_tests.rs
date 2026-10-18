@@ -90,7 +90,10 @@ fn treesitter_collapses_typescript_body_and_keeps_interface() {
     src.push_str("    return value_0;\n}\n");
 
     let out = treesitter::compress(&src, "ts").expect("compresses");
-    assert!(out.text.contains("export function process(items: number[]): number"));
+    assert!(
+        out.text
+            .contains("export function process(items: number[]): number")
+    );
     assert!(out.text.contains("interface Config"), "{}", out.text);
     assert!(out.text.contains("name: string"), "{}", out.text);
     assert!(out.text.contains("line(s) …"), "{}", out.text);
