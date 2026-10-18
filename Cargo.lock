@@ -1505,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "tinybus"
-version = "0.1.7"
+version = "0.3.2"
 dependencies = [
  "async-trait",
  "flate2",
@@ -1528,7 +1528,7 @@ dependencies = [
 
 [[package]]
 name = "tinybus-macros"
-version = "0.1.7"
+version = "0.3.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1537,7 +1537,7 @@ dependencies = [
 
 [[package]]
 name = "tinybus-module"
-version = "0.1.7"
+version = "0.3.2"
 dependencies = [
  "async-trait",
  "serde",
@@ -1549,7 +1549,7 @@ dependencies = [
 
 [[package]]
 name = "tinyjuice"
-version = "0.10.6"
+version = "0.10.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1581,7 +1581,7 @@ dependencies = [
 
 [[package]]
 name = "tinyjuice-bus"
-version = "0.10.6"
+version = "0.10.8"
 dependencies = [
  "serde",
  "serde_json",
@@ -1603,7 +1603,7 @@ dependencies = [
 
 [[package]]
 name = "tinyjuice-module"
-version = "0.10.6"
+version = "0.10.8"
 dependencies = [
  "async-trait",
  "log",
