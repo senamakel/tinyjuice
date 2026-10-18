@@ -12,8 +12,8 @@ repository = "https://github.com/tinyhumansai/tinyjuice"
 publish = false
 
 [dependencies]
-tinyjuice = { version = "0.10.8", path = "../..", default-features = false }
-tinyjuice-bus = { version = "0.10.8", path = "../tinyjuice-bus" }
+tinyjuice = { version = "0.10.9", path = "../..", default-features = false }
+tinyjuice-bus = { version = "0.10.9", path = "../tinyjuice-bus" }
 tinystoragedrivers-core = { version = ">=0.8.0, <1", git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v0.11.0", features = ["blocking"] }
 log = "0.4"
 

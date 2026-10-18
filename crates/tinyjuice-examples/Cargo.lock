@@ -1789,7 +1789,7 @@ dependencies = [
 
 [[package]]
 name = "tinyjuice"
-version = "0.10.8"
+version = "0.10.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1818,7 +1818,7 @@ dependencies = [
 
 [[package]]
 name = "tinyjuice-bus"
-version = "0.10.8"
+version = "0.10.9"
 dependencies = [
  "serde",
  "serde_json",
