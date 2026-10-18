@@ -120,8 +120,8 @@ required-features = ["tinytools"]
 [patch."https://github.com/tinyhumansai/tinybus"]
 tinybus = { path = "vendor/tinybus/crates/tinybus" }
 
-# tinybus is not on crates.io; modules name it by version range so a host can
-# unify it, and standalone builds resolve it to the nested checkout.
+# TinyBus is not on crates.io. Patch its Git and registry sources to this
+# published SDK checkout so the module and storage adapters share one bus.
 [patch.crates-io]
 tinybus = { path = "vendor/tinybus/crates/tinybus" }
 tinybus-module = { path = "vendor/tinybus/crates/tinybus-module" }
