@@ -95,7 +95,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         reviewed = job_block(self.workflow, "module-reviewed-epic-release")
         self.assertRegex(
             reviewed,
-            r"(?m)^    uses: tinyhumansai/\.github/\.github/workflows/module-reviewed-epic-release\.yml@1e28317c435a9c714002199e65d18a1067fa5777$",
+            r"(?m)^    uses: tinyhumansai/\.github/\.github/workflows/module-reviewed-epic-release\.yml@6ed83b04aab2d8977ec62e966cb914531e534fa4$",
         )
         self.assertIn(
             "module-reviewed-epic-preflight at 7b921fdcfd680e469fc0f370493095d03e414689",
