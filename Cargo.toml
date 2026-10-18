@@ -1,7 +1,7 @@
 [package]
 rust-version = "1.88"
 name = "tinyjuice"
-version = "0.10.9"
+version = "0.10.10"
 edition = "2024"
 license = "GPL-3.0-only"
 description = "Pluggable token compression for OpenHuman."
@@ -36,14 +36,14 @@ tinystoragedrivers-bus = { version = "=1.5.0", git = "https://github.com/tinyhum
 # Optional adapter boundary: REPL ops as `tinytools::Tool` impls.
 tinytools = { version = "0.5", git = "https://github.com/tinyhumansai/tinytools", optional = true }
 anyhow = { version = "1", optional = true }
-uuid = { version = "1", features = ["v4"], optional = true }
+uuid = { version = ">=1, <1.27", features = ["v4"], optional = true }
 jaq-core = { version = "3", optional = true }
 jaq-std = { version = "3", optional = true }
 jaq-json = { version = "2", optional = true }
 # The wire contract, defined once and shared with the module and with hosts.
 # This crate re-exports its types from `src/types.rs` rather than declaring a
 # second copy — see the note there.
-tinyjuice-bus = { version = "0.10.9", path = "crates/tinyjuice-bus" }
+tinyjuice-bus = { version = "0.10.10", path = "crates/tinyjuice-bus" }
 async-trait = "0.1"
 dirs = "7"
 hex = "0.4"
@@ -72,6 +72,12 @@ optional = true
 
 [dependencies.tree-sitter-typescript]
 version = "0.23"
+optional = true
+
+# Grammar crates accept any 0.1 release, but newer releases exceed TinyJuice's
+# declared MSRV. Keep their shared ABI dependency within the Rust 1.88 range.
+[dependencies.tree-sitter-language]
+version = ">=0.1, <0.1.8"
 optional = true
 
 [dev-dependencies]
@@ -104,6 +110,7 @@ tinyjuice-treesitter = [
     "dep:tree-sitter-python",
     "dep:tree-sitter-rust",
     "dep:tree-sitter-typescript",
+    "dep:tree-sitter-language",
 ]
 
 [profile.release]

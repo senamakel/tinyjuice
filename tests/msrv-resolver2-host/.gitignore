@@ -1,0 +1,3 @@
+# This consumer must resolve from scratch on every run; the test script removes
+# its generated lock after Cargo exits.
+/Cargo.lock

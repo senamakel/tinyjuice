@@ -1,0 +1,4 @@
+# Keep this proof on normal resolver-2 selection even if the runner opts into
+# Rust-version-aware fallback. The separate consumer must see latest.
+[resolver]
+incompatible-rust-versions = "allow"
