@@ -95,8 +95,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         reviewed = job_block(self.workflow, "module-reviewed-epic-release")
         self.assertRegex(
             reviewed,
-            r"(?m)^    uses: tinyhumansai/\.github/\.github/workflows/module-reviewed-epic-release\.yml@f1621b8709d9c7b68241cbec95925db470b6ee7f$",
+            r"(?m)^    uses: tinyhumansai/\.github/\.github/workflows/module-reviewed-epic-release\.yml@1e28317c435a9c714002199e65d18a1067fa5777$",
         )
+        self.assertIn("module-reviewed-epic-preflight at 7b921fd", reviewed)
         self.assertRegex(
             job_block(self.workflow, "module-release"),
             r"(?m)^    uses: tinyhumansai/\.github/\.github/workflows/module-release\.yml@3e87ade76b622844985d0c665a3b075313e4545c$",
@@ -137,10 +138,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         powershell_template = re.search(r'^\$archive = Join-Path \$outputPath "(.+)"$', powershell_builder, re.MULTILINE)
         self.assertIsNotNone(shell_template)
         self.assertIsNotNone(powershell_template)
-        shell_archive = shell_template.group(1).replace("${crate}", crate).replace("${version}", "0.10.6").replace("${host}", "ubuntu-22.04-x86_64")
-        powershell_archive = powershell_template.group(1).replace("$Crate", crate).replace("$Version", "0.10.6").replace("$HostKey", "windows-2022-x86_64")
-        self.assertEqual(shell_archive, "tinyjuice-module-0.10.6-ubuntu-22.04-x86_64.tar.gz")
-        self.assertEqual(powershell_archive, "tinyjuice-module-0.10.6-windows-2022-x86_64.zip")
+        shell_archive = shell_template.group(1).replace("${crate}", crate).replace("${version}", "0.10.7").replace("${host}", "ubuntu-22.04-x86_64")
+        powershell_archive = powershell_template.group(1).replace("$Crate", crate).replace("$Version", "0.10.7").replace("$HostKey", "windows-2022-x86_64")
+        self.assertEqual(shell_archive, "tinyjuice-module-0.10.7-ubuntu-22.04-x86_64.tar.gz")
+        self.assertEqual(powershell_archive, "tinyjuice-module-0.10.7-windows-2022-x86_64.zip")
 
 
 if __name__ == "__main__":

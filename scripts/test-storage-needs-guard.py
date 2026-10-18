@@ -21,7 +21,8 @@ PACKAGE_ID = (
     f"?rev={REV}#tinystoragedrivers-bus@1.5.0"
 )
 ROOT_ID = "path+file:///proof#tinyjuice-storage-needs-consumer@0.1.0"
-TINYJUICE_BUS_ID = "path+file:///tinyjuice/crates/tinyjuice-bus#tinyjuice-bus@0.10.6"
+TINYJUICE_BUS_ID = "path+file:///tinyjuice/crates/tinyjuice-bus#tinyjuice-bus@0.10.7"
+TINYBUS_SDK_REV = "cba2de0e573f99fe4c7e45ba14e2d6b5a2a7757f"
 SERDE_ID = "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.228"
 
 
@@ -69,7 +70,7 @@ def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
     tinyjuice_bus = {
         "id": TINYJUICE_BUS_ID,
         "name": "tinyjuice-bus",
-        "version": "0.10.6",
+        "version": "0.10.7",
         "source": None,
         "dependencies": [storage_bus_dependency(), serde_dependency()],
     }
@@ -140,16 +141,36 @@ class StorageNeedsGuardTests(unittest.TestCase):
             "default-features": False,
         })
 
-        self.assertEqual(root_manifest["package"]["version"], "0.10.6")
-        self.assertEqual(root_manifest["dependencies"]["tinyjuice-bus"]["version"], "0.10.6")
+        self.assertEqual(root_manifest["package"]["version"], "0.10.7")
+        self.assertEqual(root_manifest["dependencies"]["tinyjuice-bus"]["version"], "0.10.7")
+        self.assertEqual(consumer_manifest["dependencies"]["tinyjuice-bus"]["version"], "0.10.7")
+        examples_manifest = tomllib.loads((ROOT / "crates/tinyjuice-examples/Cargo.toml").read_text())
+        self.assertEqual(examples_manifest["dependencies"]["tinyjuice"]["version"], "0.10.7")
         for relative in ("crates/tinyjuice-bus/Cargo.toml", "crates/tinyjuice-module/Cargo.toml"):
             manifest = tomllib.loads((ROOT / relative).read_text())
-            self.assertEqual(manifest["package"]["version"], "0.10.6")
+            self.assertEqual(manifest["package"]["version"], "0.10.7")
 
         module_manifest = tomllib.loads((ROOT / "crates/tinyjuice-module/Cargo.toml").read_text())
-        self.assertEqual(module_manifest["dependencies"]["tinybus"]["version"], "=0.1.7")
-        self.assertEqual(module_manifest["dependencies"]["tinybus-module"], "=0.1.7")
-        self.assertEqual(module_manifest["dev-dependencies"]["tinybus"]["version"], "=0.1.7")
+        self.assertEqual(module_manifest["dependencies"]["tinyjuice"]["version"], "0.10.7")
+        self.assertEqual(module_manifest["dependencies"]["tinyjuice-bus"]["version"], "0.10.7")
+        self.assertEqual(module_manifest["dependencies"]["tinybus"]["version"], "=0.3.2")
+        self.assertEqual(module_manifest["dependencies"]["tinybus-module"], "=0.3.2")
+        self.assertEqual(module_manifest["dev-dependencies"]["tinybus"]["version"], "=0.3.2")
+        driver_manifest = tomllib.loads((ROOT / "crates/tinyjuice-drivers/Cargo.toml").read_text())
+        self.assertEqual(driver_manifest["dependencies"]["tinyjuice"]["version"], "0.10.7")
+        self.assertEqual(driver_manifest["dependencies"]["tinyjuice-bus"]["version"], "0.10.7")
+        self.assertEqual(
+            tomllib.loads((ROOT / "vendor/tinybus/Cargo.toml").read_text())
+            ["workspace"]["package"]["version"],
+            "0.3.2",
+        )
+        sdk_rev = subprocess.run(
+            ["git", "-C", str(ROOT / "vendor/tinybus"), "rev-parse", "HEAD"],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        self.assertEqual(sdk_rev, TINYBUS_SDK_REV)
         self.assertEqual(root_manifest["patch"]["https://github.com/tinyhumansai/tinybus"]["tinybus"]["path"],
                          "vendor/tinybus/crates/tinybus")
         self.assertEqual(root_manifest["patch"]["crates-io"]["tinybus"]["path"],
@@ -182,7 +203,7 @@ else:
             normal_path = temp / "normal.txt"
             normal_path.write_text(normal_graph if normal_graph is not None else
                                    "tinyjuice-storage-needs-consumer v0.1.0\n"
-                                   "tinyjuice-bus v0.10.6 (/tinyjuice/crates/tinyjuice-bus)\n"
+                                   "tinyjuice-bus v0.10.7 (/tinyjuice/crates/tinyjuice-bus)\n"
                                    "serde v1.0.228 (registry)\n"
                                    "tinystoragedrivers-bus v1.5.0 (canonical source)\n",
                                    encoding="utf-8")
@@ -306,9 +327,9 @@ else:
             metadata_fixture(),
             normal_graph=(
                 "tinyjuice-storage-needs-consumer v0.1.0\n"
-                "tinyjuice-bus v0.10.6 (/tinyjuice/crates/tinyjuice-bus)\n"
+                "tinyjuice-bus v0.10.7 (/tinyjuice/crates/tinyjuice-bus)\n"
                 "serde v1.0.228 (registry)\n"
-                "tinystoragedrivers-bus v1.5.0\ntinybus v0.1.7\n"
+                "tinystoragedrivers-bus v1.5.0\ntinybus v0.3.2\n"
             ),
         )
         self.assertNotEqual(result.returncode, 0)
