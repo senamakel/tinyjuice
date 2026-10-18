@@ -79,6 +79,27 @@ fn treesitter_collapses_python_body() {
     assert!(!out.text.contains("x_15"));
 }
 
+#[cfg(feature = "tinyjuice-treesitter")]
+#[test]
+fn treesitter_collapses_typescript_body_and_keeps_interface() {
+    let mut src = String::from("export interface Config { name: string; size: number; }\n\n");
+    src.push_str("export function process(items: number[]): number {\n");
+    for i in 0..30 {
+        src.push_str(&format!("    const value_{i} = items.length + {i};\n"));
+    }
+    src.push_str("    return value_0;\n}\n");
+
+    let out = treesitter::compress(&src, "ts").expect("compresses");
+    assert!(
+        out.text
+            .contains("export function process(items: number[]): number")
+    );
+    assert!(out.text.contains("interface Config"), "{}", out.text);
+    assert!(out.text.contains("name: string"), "{}", out.text);
+    assert!(out.text.contains("line(s) …"), "{}", out.text);
+    assert!(!out.text.contains("value_15"));
+}
+
 #[test]
 fn keeps_marker_lines_in_body() {
     let mut src = String::from("fn f() {\n");

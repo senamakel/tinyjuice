@@ -85,7 +85,7 @@ jobs:
       pull-requests: read
       checks: read
       actions: read
-    uses: tinyhumansai/.github/.github/workflows/module-reviewed-epic-release.yml@f1621b8709d9c7b68241cbec95925db470b6ee7f
+    uses: tinyhumansai/.github/.github/workflows/module-reviewed-epic-release.yml@6ed83b04aab2d8977ec62e966cb914531e534fa4
     with:
       tag: ${{ needs.resolve.outputs.tag }}
       version: ${{ needs.resolve.outputs.version }}

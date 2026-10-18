@@ -8,5 +8,5 @@ publish = false
 [workspace]
 
 [dependencies]
-tinyjuice-bus = { path = "../../crates/tinyjuice-bus" }
+tinyjuice-bus = { version = "0.10.8", path = "../../crates/tinyjuice-bus" }
 tinystoragedrivers-bus = { version = "=1.5.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "c9ea6ff1615b77b55d7269403af5fd11bedc9ce8", default-features = false }

@@ -1789,7 +1789,7 @@ dependencies = [
 
 [[package]]
 name = "tinyjuice"
-version = "0.10.4"
+version = "0.10.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1818,11 +1818,12 @@ dependencies = [
 
 [[package]]
 name = "tinyjuice-bus"
-version = "0.10.4"
+version = "0.10.8"
 dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tinystoragedrivers-bus",
 ]
 
 [[package]]
@@ -1837,6 +1838,15 @@ dependencies = [
  "tinyjuice",
  "tinytools",
  "tokio",
+]
+
+[[package]]
+name = "tinystoragedrivers-bus"
+version = "1.5.0"
+source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=c9ea6ff1615b77b55d7269403af5fd11bedc9ce8#c9ea6ff1615b77b55d7269403af5fd11bedc9ce8"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2080,12 +2090,13 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.27.0"
+version = "0.26.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2038684e0058edba0d17302619f62eabce4a8e11c6ac59506996a8d79848851d"
+checksum = "17ebdd3a5a7e28a1890b876fdbd0c3c0fe0a6336cffaa104f11b9f720c9daa29"
 dependencies = [
  "cc",
  "regex",
+ "regex-syntax",
  "serde_json",
  "streaming-iterator",
  "tree-sitter-language",
@@ -2093,9 +2104,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-language"
-version = "0.1.8"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca0d1bf6fdd806e43ae5198f82f527056d359def39e54e67a0f478ac09dac081"
+checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 
 [[package]]
 name = "tree-sitter-python"

@@ -95,7 +95,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         reviewed = job_block(self.workflow, "module-reviewed-epic-release")
         self.assertRegex(
             reviewed,
-            r"(?m)^    uses: tinyhumansai/\.github/\.github/workflows/module-reviewed-epic-release\.yml@f1621b8709d9c7b68241cbec95925db470b6ee7f$",
+            r"(?m)^    uses: tinyhumansai/\.github/\.github/workflows/module-reviewed-epic-release\.yml@6ed83b04aab2d8977ec62e966cb914531e534fa4$",
         )
         self.assertRegex(
             job_block(self.workflow, "module-release"),
@@ -137,10 +137,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         powershell_template = re.search(r'^\$archive = Join-Path \$outputPath "(.+)"$', powershell_builder, re.MULTILINE)
         self.assertIsNotNone(shell_template)
         self.assertIsNotNone(powershell_template)
-        shell_archive = shell_template.group(1).replace("${crate}", crate).replace("${version}", "0.10.6").replace("${host}", "ubuntu-22.04-x86_64")
-        powershell_archive = powershell_template.group(1).replace("$Crate", crate).replace("$Version", "0.10.6").replace("$HostKey", "windows-2022-x86_64")
-        self.assertEqual(shell_archive, "tinyjuice-module-0.10.6-ubuntu-22.04-x86_64.tar.gz")
-        self.assertEqual(powershell_archive, "tinyjuice-module-0.10.6-windows-2022-x86_64.zip")
+        shell_archive = shell_template.group(1).replace("${crate}", crate).replace("${version}", "0.10.8").replace("${host}", "ubuntu-22.04-x86_64")
+        powershell_archive = powershell_template.group(1).replace("$Crate", crate).replace("$Version", "0.10.8").replace("$HostKey", "windows-2022-x86_64")
+        self.assertEqual(shell_archive, "tinyjuice-module-0.10.8-ubuntu-22.04-x86_64.tar.gz")
+        self.assertEqual(powershell_archive, "tinyjuice-module-0.10.8-windows-2022-x86_64.zip")
 
 
 if __name__ == "__main__":
