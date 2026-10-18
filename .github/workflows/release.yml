@@ -85,7 +85,6 @@ jobs:
       pull-requests: read
       checks: read
       actions: read
-    # This reviewed workflow pins module-reviewed-epic-preflight at 7b921fdcfd680e469fc0f370493095d03e414689.
     uses: tinyhumansai/.github/.github/workflows/module-reviewed-epic-release.yml@6ed83b04aab2d8977ec62e966cb914531e534fa4
     with:
       tag: ${{ needs.resolve.outputs.tag }}
