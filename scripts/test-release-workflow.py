@@ -141,10 +141,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         powershell_template = re.search(r'^\$archive = Join-Path \$outputPath "(.+)"$', powershell_builder, re.MULTILINE)
         self.assertIsNotNone(shell_template)
         self.assertIsNotNone(powershell_template)
-        shell_archive = shell_template.group(1).replace("${crate}", crate).replace("${version}", "0.10.7").replace("${host}", "ubuntu-22.04-x86_64")
-        powershell_archive = powershell_template.group(1).replace("$Crate", crate).replace("$Version", "0.10.7").replace("$HostKey", "windows-2022-x86_64")
-        self.assertEqual(shell_archive, "tinyjuice-module-0.10.7-ubuntu-22.04-x86_64.tar.gz")
-        self.assertEqual(powershell_archive, "tinyjuice-module-0.10.7-windows-2022-x86_64.zip")
+        shell_archive = shell_template.group(1).replace("${crate}", crate).replace("${version}", "0.10.8").replace("${host}", "ubuntu-22.04-x86_64")
+        powershell_archive = powershell_template.group(1).replace("$Crate", crate).replace("$Version", "0.10.8").replace("$HostKey", "windows-2022-x86_64")
+        self.assertEqual(shell_archive, "tinyjuice-module-0.10.8-ubuntu-22.04-x86_64.tar.gz")
+        self.assertEqual(powershell_archive, "tinyjuice-module-0.10.8-windows-2022-x86_64.zip")
 
 
 if __name__ == "__main__":
