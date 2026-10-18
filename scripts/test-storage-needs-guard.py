@@ -126,6 +126,17 @@ def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
 
 
 class StorageNeedsGuardTests(unittest.TestCase):
+    def test_ci_guard_job_checks_out_recursive_submodules_without_credentials(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        checkout = re.search(
+            r"(?ms)^      - uses: actions/checkout@[^\n]+\n        with:\n((?:          [^\n]*\n)+)",
+            workflow,
+        )
+        self.assertIsNotNone(checkout, "CI guard checkout step was not found")
+        options = checkout.group(1)
+        self.assertRegex(options, r"(?m)^          submodules: recursive$")
+        self.assertRegex(options, r"(?m)^          persist-credentials: false$")
+
     def test_release_manifests_pin_one_data_only_storage_schema_and_sdk(self):
         root_manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
         consumer_manifest = tomllib.loads(
