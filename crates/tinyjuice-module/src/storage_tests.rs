@@ -164,12 +164,20 @@ async fn descriptor_binding_uses_the_granted_blob_and_document_ports() -> TestRe
         )
         .await?;
 
-    let original = "bound host storage keeps this durable original\nsecond line";
+    let original = (0..200)
+        .map(|index| {
+            if index == 137 {
+                format!("ERROR request failed id={index}\n")
+            } else {
+                format!("INFO request completed id={index}\n")
+            }
+        })
+        .collect::<String>();
     let output: tinyjuice::types::CompressedOutput = proxy
         .call(
             "Compress",
             (
-                original,
+                original.clone(),
                 tinyjuice::types::ContentHint {
                     explicit: Some(tinyjuice::types::ContentKind::Log),
                     ..Default::default()
