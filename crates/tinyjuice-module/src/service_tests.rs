@@ -182,7 +182,13 @@ async fn legacy_install_discovers_storage_started_after_module_setup() {
     service.install(install()).await.unwrap();
 
     let original = (0..200)
-        .map(|index| format!("INFO request completed id={index}\n"))
+        .map(|index| {
+            if index == 137 {
+                format!("ERROR request failed id={index}\n")
+            } else {
+                format!("INFO request completed id={index}\n")
+            }
+        })
         .collect::<String>();
     let result = service
         .compress(
