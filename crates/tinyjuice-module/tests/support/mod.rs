@@ -121,7 +121,7 @@ impl JuiceStorage {
         self.registration.revoke(lease).await
     }
 
-    pub(super) async fn shutdown(self) -> Result<(), HostFailure> {
+    pub(super) async fn shutdown(self) -> tinybus::Result<()> {
         self.registration.shutdown().await
     }
 }

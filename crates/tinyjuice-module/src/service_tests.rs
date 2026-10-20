@@ -3,7 +3,10 @@ use tinyjuice::types::CompressOptions;
 
 #[test]
 fn setup_config_accepts_legacy_empty_forms_and_a_typed_storage_descriptor() {
-    assert!(ModuleSetupConfig::Null(()) .storage_descriptor().is_none());
+    assert!(serde_json::from_value::<ModuleSetupConfig>(serde_json::Value::Null)
+        .unwrap()
+        .storage_descriptor()
+        .is_none());
     assert!(serde_json::from_value::<ModuleSetupConfig>(serde_json::json!({}))
         .unwrap()
         .storage_descriptor()
@@ -28,8 +31,6 @@ fn setup_config_accepts_legacy_empty_forms_and_a_typed_storage_descriptor() {
 
 #[tokio::test]
 async fn service_compresses_and_retrieves_a_large_log() {
-    // `install` reconfigures process-global cache state.
-    let _install = crate::storage::tests::INSTALL.lock().await;
     let service = Compression::default();
     service
         .install(InstallRequest {
@@ -83,7 +84,6 @@ async fn compression_services_keep_durable_ccr_in_their_own_storage() {
     use crate::storage::tests::rig;
     use tinystoragedrivers_core::{Scope, StorageBackend};
 
-    let _install = crate::storage::tests::INSTALL.lock().await;
     let first = rig(true).await.unwrap();
     let second = rig(true).await.unwrap();
     let first_storage = crate::storage::bind(first.module.clone(), None)

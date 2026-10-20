@@ -9,10 +9,6 @@ use tinystoragedrivers_busproxy::{PerCallerEndpoint, ServedStorage, serve};
 use tinystoragedrivers_client::StorageServer;
 use tinystoragedrivers_core::{MemoryStorage, Scope, ScopedStorage};
 
-/// Serializes the tests that `install`, which reconfigures process-global cache
-/// state.
-pub(crate) static INSTALL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 pub(crate) struct Rig {
@@ -151,7 +147,6 @@ fn install_request(durable: bool) -> tinyjuice_bus::wire::InstallRequest {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResult {
     use crate::service::Compression;
-    let _install = INSTALL.lock().await;
     let rig = rig(true).await?;
     let storage = crate::storage::bind(rig.module.clone(), None)
         .await?

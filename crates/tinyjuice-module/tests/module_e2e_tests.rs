@@ -249,7 +249,7 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
     compact_with_calls_back_to_the_host_for_a_focused_summary(&client, &proxy).await;
     savings_are_computed_and_persisted_inside_the_loaded_module(&proxy).await;
 
-    let methods = tinyjuice_bus::names::methods;
+    use tinyjuice_bus::names::methods;
     proxy
         .call::<()>(
             methods::RECORD_SAVINGS,
