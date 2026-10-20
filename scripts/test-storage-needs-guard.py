@@ -11,7 +11,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACT_VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["version"]
-REV = "595723e1b1cabeb3d36f0c5b6ff2e11b458e7558"
+TSD_BUS_VERSION = "1.9.0"
+TSD_REV = "a04e3a174fa8f28d5229a816ca6b39c72a9efd7b"
+TINYBUS_VERSION = "0.3.11"
+REV = TSD_REV
 SOURCE = (
     "git+https://github.com/tinyhumansai/tinystoragedrivers"
     f"?rev={REV}#{REV}"
@@ -20,24 +23,24 @@ SOURCE = (
 # resolved commit belongs in package.source, not as another package-ID fragment.
 PACKAGE_ID = (
     "git+https://github.com/tinyhumansai/tinystoragedrivers"
-    f"?rev={REV}#tinystoragedrivers-bus@1.8.0"
+    f"?rev={REV}#tinystoragedrivers-bus@{TSD_BUS_VERSION}"
 )
 ROOT_ID = "path+file:///proof#tinyjuice-storage-needs-consumer@0.1.0"
 TINYJUICE_BUS_ID = f"path+file:///tinyjuice/crates/tinyjuice-bus#tinyjuice-bus@{CONTRACT_VERSION}"
-TINYBUS_SDK_REV = "207a9a7df15e44fdba00a807d0f7eaf21904ba0e"
+TINYBUS_SDK_REV = "9e14f65666b11782ec1054aba576114026d180f8"
 SERDE_ID = "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.228"
 
 
 def package_id_for(source):
     source_spec = source.partition("#")[0]
-    return f"{source_spec}#tinystoragedrivers-bus@1.8.0"
+    return f"{source_spec}#tinystoragedrivers-bus@{TSD_BUS_VERSION}"
 
 
 def storage_bus_dependency(*, source=SOURCE, kind=None, default_features=False):
     return {
         "name": "tinystoragedrivers-bus",
         "source": source,
-        "req": "=1.8.0",
+        "req": f"={TSD_BUS_VERSION}",
         "kind": kind,
         "target": None,
         "optional": False,
@@ -65,7 +68,7 @@ def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
     bus_package = {
         "id": package_id,
         "name": "tinystoragedrivers-bus",
-        "version": "1.8.0",
+        "version": TSD_BUS_VERSION,
         "source": source,
         "dependencies": [serde_dependency()],
     }
@@ -166,9 +169,9 @@ class StorageNeedsGuardTests(unittest.TestCase):
         consumer_pin = consumer_manifest["dependencies"]["tinystoragedrivers-bus"]
         self.assertEqual(root_pin, consumer_pin)
         self.assertEqual(root_pin, {
-            "version": "=1.8.0",
+            "version": f"={TSD_BUS_VERSION}",
             "git": "https://github.com/tinyhumansai/tinystoragedrivers",
-            "rev": REV,
+            "rev": TSD_REV,
             "default-features": False,
         })
 
@@ -184,14 +187,14 @@ class StorageNeedsGuardTests(unittest.TestCase):
         module_manifest = tomllib.loads((ROOT / "crates/tinyjuice-module/Cargo.toml").read_text())
         self.assertEqual(module_manifest["dependencies"]["tinyjuice"]["version"], CONTRACT_VERSION)
         self.assertEqual(module_manifest["dependencies"]["tinyjuice-bus"]["version"], CONTRACT_VERSION)
-        self.assertEqual(module_manifest["dependencies"]["tinybus"]["version"], "=0.3.3")
-        self.assertEqual(module_manifest["dependencies"]["tinybus-module"], "=0.3.3")
-        self.assertEqual(module_manifest["dev-dependencies"]["tinybus"]["version"], "=0.3.3")
+        self.assertEqual(module_manifest["dependencies"]["tinybus"]["version"], f"={TINYBUS_VERSION}")
+        self.assertEqual(module_manifest["dependencies"]["tinybus-module"]["version"], f"={TINYBUS_VERSION}")
+        self.assertEqual(module_manifest["dev-dependencies"]["tinybus"]["version"], f"={TINYBUS_VERSION}")
         driver_manifest = tomllib.loads((ROOT / "crates/tinyjuice-drivers/Cargo.toml").read_text())
         self.assertNotIn("version", driver_manifest["dependencies"]["tinyjuice"])
         self.assertNotIn("version", driver_manifest["dependencies"]["tinyjuice-bus"])
         runtime_pin = {
-            "version": "=1.8.0",
+            "version": f"={TSD_BUS_VERSION}",
             "git": "https://github.com/tinyhumansai/tinystoragedrivers",
             "rev": REV,
         }
@@ -214,7 +217,7 @@ class StorageNeedsGuardTests(unittest.TestCase):
         self.assertEqual(
             sdk_gitlink,
             f"160000 {TINYBUS_SDK_REV} 0\tvendor/tinybus",
-            "TinyBus SDK gitlink must pin the verified 0.3.3 source, including in a nonrecursive checkout",
+            "TinyBus SDK gitlink must pin the verified 0.3.11 source, including in a nonrecursive checkout",
         )
         self.assertEqual(root_manifest["patch"]["https://github.com/tinyhumansai/tinybus"]["tinybus"]["path"],
                          "vendor/tinybus/crates/tinybus")
