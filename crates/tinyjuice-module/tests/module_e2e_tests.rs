@@ -9,7 +9,11 @@ use std::{
     time::Duration,
 };
 
-use tinybus::{Connection, module::{ModuleHost, ModuleState}, test_support::{admit_module, wait_until_serving}};
+use tinybus::{
+    Connection,
+    module::{ModuleHost, ModuleState},
+    test_support::{admit_module, wait_until_serving},
+};
 use tinyjuice::types::{AgentTokenjuiceCompression, CompressedOutput, ContentHint, ContentKind};
 use tinyjuice_bus::wire::CompactResponse;
 use tinyjuice_module::{BUS_NAME, OBJECT_PATH};
@@ -167,11 +171,8 @@ async fn migration_client_is_selected_and_confidential(
     bus: &MemoryBus,
     module_peer: &tinybus::BusName,
 ) -> Result<MigrationModuleClient, Box<dyn std::error::Error>> {
-    let controller_proxy = controller.proxy(
-        BUS_NAME,
-        MIGRATION_OBJECT_PATH,
-        MIGRATION_INTERFACE,
-    )?;
+    let controller_proxy =
+        controller.proxy(BUS_NAME, MIGRATION_OBJECT_PATH, MIGRATION_INTERFACE)?;
     assert!(
         controller_proxy
             .call::<serde_json::Value>(GET_SCHEMA_MEMBER, ())
@@ -181,11 +182,7 @@ async fn migration_client_is_selected_and_confidential(
     );
 
     let outsider = Connection::connect(bus.connect().await?).await?;
-    let outsider_proxy = outsider.proxy(
-        BUS_NAME,
-        MIGRATION_OBJECT_PATH,
-        MIGRATION_INTERFACE,
-    )?;
+    let outsider_proxy = outsider.proxy(BUS_NAME, MIGRATION_OBJECT_PATH, MIGRATION_INTERFACE)?;
     let malformed = outsider_proxy
         .call_confidential::<serde_json::Value>(EXCHANGE_MEMBER, serde_json::json!("secret-marker"))
         .await
@@ -206,7 +203,10 @@ async fn migration_client_is_selected_and_confidential(
     assert_eq!(declaration.owner.as_str(), "juice");
     assert_eq!(declaration.steps.len(), 1);
     assert_eq!(declaration.steps[0].id, "ccr_prefix_v2");
-    assert_eq!(declaration.steps[0].transform.operation, "tinyjuice.ccr-prefix-v2");
+    assert_eq!(
+        declaration.steps[0].transform.operation,
+        "tinyjuice.ccr-prefix-v2"
+    );
     assert_eq!(declaration.steps[0].transform.version, 1);
     assert_eq!(declaration.steps[0].transform.kind, TransformKind::Blob);
     Ok(client)
