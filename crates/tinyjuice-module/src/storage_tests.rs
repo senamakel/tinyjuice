@@ -141,7 +141,15 @@ async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResu
     install.options.ccr_min_tokens = 1;
     install.max_cache_bytes = 1;
     service.install(install).await?;
-    let content = "install wired durable tier fixture original\n".repeat(20);
+    let content = (0..200)
+        .map(|index| {
+            if index == 137 {
+                format!("ERROR request failed id={index}\n")
+            } else {
+                format!("INFO request completed id={index}\n")
+            }
+        })
+        .collect::<String>();
     let output = service
         .compress(
             content.clone(),
@@ -160,7 +168,16 @@ async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResu
 
     // Switched off: new originals stay in memory only.
     service.install(install_request(false)).await?;
-    let memory_only = "install cleared durable tier fixture original\n".repeat(20);
+    service.install(install_request(false)).await?;
+    let memory_only = (0..200)
+        .map(|index| {
+            if index == 137 {
+                format!("ERROR request failed after reset id={index}\n")
+            } else {
+                format!("INFO request completed after reset id={index}\n")
+            }
+        })
+        .collect::<String>();
     let output = service
         .compress(
             memory_only,
@@ -170,7 +187,7 @@ async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResu
             },
         )
         .await?;
-    assert!(output.ccr_token.is_none());
+    let token = output.ccr_token.ok_or("memory cache should retain the original")?;
     let key = format!("{}{token}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]);
     assert!(host_blobs.get(&key).await?.is_none(), "nothing written");
     Ok(())
