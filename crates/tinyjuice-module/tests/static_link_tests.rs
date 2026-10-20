@@ -27,7 +27,10 @@ async fn linked_module_is_admitted_and_serves_its_bus_name() {
         .iter()
         .map(|interface| interface.version.interface.as_str())
         .collect();
-    assert_eq!(provided, ["ai.tinyhumans.tinyjuice.Compression", MIGRATION_INTERFACE]);
+    assert_eq!(
+        provided,
+        ["ai.tinyhumans.tinyjuice.Compression", MIGRATION_INTERFACE]
+    );
     assert!(matches!(
         info.state,
         ModuleState::Resolved

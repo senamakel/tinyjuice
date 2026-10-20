@@ -56,7 +56,10 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         .iter()
         .map(|interface| interface.version.interface.as_str())
         .collect();
-    assert_eq!(provided, ["ai.tinyhumans.tinyjuice.Compression", MIGRATION_INTERFACE]);
+    assert_eq!(
+        provided,
+        ["ai.tinyhumans.tinyjuice.Compression", MIGRATION_INTERFACE]
+    );
     let methods: Vec<&str> = loaded
         .manifest
         .provides
@@ -310,7 +313,11 @@ async fn assert_legacy_ccr_migrates_over_the_loaded_module(
         "successful migration removes the expired legacy source"
     );
     assert!(
-        blobs.get("tinyjuice_ccr/persistent").await.unwrap().is_none(),
+        blobs
+            .get("tinyjuice_ccr/persistent")
+            .await
+            .unwrap()
+            .is_none(),
         "successful migration removes the persistent legacy source"
     );
 
