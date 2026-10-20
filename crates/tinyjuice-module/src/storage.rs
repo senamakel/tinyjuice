@@ -137,6 +137,7 @@ impl CcrStore for InstanceCcrStore {
 }
 
 /// The host's blob port, connected through `connection`, when it serves one.
+#[cfg(test)]
 async fn blobs(connection: Connection) -> Option<Arc<dyn BlobStore>> {
     scoped(connection)
         .await
@@ -170,6 +171,7 @@ async fn scoped(connection: Connection) -> Option<tinystoragedrivers_core::Scope
 
 /// The CCR durable tier on the host's blob port, or `None` when the host
 /// serves no storage (or cannot expire blobs for `ttl`).
+#[cfg(test)]
 pub(crate) async fn durable_tier(
     connection: Connection,
     ttl: Option<Duration>,
@@ -192,6 +194,7 @@ pub(crate) async fn durable_tier_on(
 
 /// The CCR durable tier on `blobs`, or `None` when the store cannot be built
 /// (for example a handle that cannot expire blobs for `ttl`).
+#[cfg(test)]
 async fn tier_on(blobs: Arc<dyn BlobStore>, ttl: Option<Duration>) -> Option<Arc<dyn CcrStore>> {
     match durable_tier_on(blobs, ttl).await {
         Ok(store) => Some(store),

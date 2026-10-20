@@ -449,6 +449,7 @@ async fn setup(context: ModuleSetupContext, config: ModuleSetupConfig) -> BusRes
     setup_connection_services_with_storage(connection, storage, require_storage).await
 }
 
+#[cfg(test)]
 async fn setup_connection_services(connection: Connection) -> BusResult<()> {
     let storage = crate::storage::bind(connection.clone(), None).await?;
     setup_connection_services_with_storage(connection, storage, false).await
