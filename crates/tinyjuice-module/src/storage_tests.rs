@@ -9,6 +9,9 @@ use tinystoragedrivers_busproxy::{PerCallerEndpoint, ServedStorage, serve};
 use tinystoragedrivers_client::StorageServer;
 use tinystoragedrivers_core::{MemoryStorage, Scope, ScopedStorage};
 
+#[path = "../tests/support/juice_storage.rs"]
+mod governed_fixture;
+
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 pub(crate) struct Rig {
@@ -88,6 +91,67 @@ async fn originals_land_as_blobs_on_the_host_port() -> TestResult {
 async fn without_a_storage_host_there_is_no_durable_tier() -> TestResult {
     let rig = rig(false).await?;
     assert!(durable_tier(rig.module.clone(), None).await.is_none());
+    assert!(
+        legacy_durable_tier(rig.module.clone(), None)
+            .await
+            .is_none()
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn descriptor_binding_uses_the_granted_blob_and_document_ports() -> TestResult {
+    use tinybus::{
+        Connection, broker::Broker, module::ModuleHost, transport::memory::MemoryTransport,
+    };
+    use tinystoragedrivers_core::StorageBackend;
+
+    let bus = MemoryBus::new();
+    let broker = Broker::new_restricted_module_control();
+    let broker_task = broker.spawn(bus.clone());
+    let (broker_transport, controller_transport) = MemoryTransport::pair();
+    broker.attach_module_controller(Arc::new(broker_transport))?;
+    let controller = Connection::connect(Box::new(controller_transport)).await?;
+    let modules = ModuleHost::new(broker);
+    let module = Connection::connect(bus.connect().await?).await?;
+    let peer = tinyjuice_bus::names::BUS_NAME.parse()?;
+    module.request_name(peer.clone()).await?;
+
+    let governed = governed_fixture::JuiceStorage::attach(&modules, &controller)
+        .await
+        .unwrap();
+    let (_lease, descriptor) = governed.lease("profile-a", &peer).await.unwrap();
+    let binding = bind(module, Some(descriptor))
+        .await?
+        .ok_or("the configured descriptor resolves storage ports")?;
+    let durable = durable_tier_on(Arc::clone(&binding.blobs), None).await?;
+    let store = InstanceCcrStore::new();
+    store.configure(1, 1, None);
+    store.set_durable(Some(durable));
+
+    let original = "bound host storage keeps this durable original\nsecond line";
+    let put = store.put(original);
+    assert!(put.retained());
+    assert_eq!(store.get(put.token()).as_deref(), Some(original));
+    assert_eq!(
+        store
+            .get_range(put.token(), 1, 2, RangeUnit::Lines)
+            .as_deref(),
+        Some("second line")
+    );
+    let scoped = governed
+        .backend
+        .for_scope(&Scope::new("profile-a")?)
+        .unwrap();
+    let key = format!(
+        "{}{}",
+        tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0],
+        put.token()
+    );
+    assert!(scoped.blobs().get(&key).await?.is_some());
+
+    governed.shutdown().await?;
+    broker_task.abort();
     Ok(())
 }
 

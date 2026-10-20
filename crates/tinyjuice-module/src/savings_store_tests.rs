@@ -336,3 +336,64 @@ async fn an_import_whose_write_fails_is_an_error_leaves_totals_alone_and_can_ret
     let stored = flaky.get(SAVINGS_COLLECTION, SAVINGS_DOC_ID).await.unwrap();
     assert_eq!(stored.unwrap().doc["total"]["events"], 3);
 }
+
+#[tokio::test]
+async fn governed_document_binding_persists_savings_without_a_connection_fallback() {
+    let rig = rig(true).await.unwrap();
+    let docs = Arc::clone(rig.backend.for_scope(&Scope::local()).unwrap().documents());
+    let savings = Savings::with_documents(docs, true);
+
+    savings.record(None, &req(200, 100)).await.unwrap();
+
+    assert_eq!(savings.stats(None).await.unwrap().total.events, 1);
+    assert_eq!(
+        stored(&rig).await.unwrap().unwrap()["total"]["events"],
+        1,
+        "the bound document store persists the instance ledger"
+    );
+}
+
+#[tokio::test]
+async fn failed_record_write_rolls_back_the_instance_ledger() {
+    let backend = tinystoragedrivers_core::MemoryStorage::new();
+    let inner = Arc::clone(backend.for_scope(&Scope::local()).unwrap().documents());
+    let flaky = Arc::new(FlakyDocs {
+        inner,
+        fail_puts: std::sync::atomic::AtomicBool::new(true),
+    });
+    let savings = Savings::with_documents(flaky.clone(), true);
+
+    assert!(savings.record(None, &req(200, 100)).await.is_err());
+    assert_eq!(savings.stats(None).await.unwrap().total.events, 0);
+
+    flaky
+        .fail_puts
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    savings.record(None, &req(200, 100)).await.unwrap();
+    assert_eq!(savings.stats(None).await.unwrap().total.events, 1);
+}
+
+#[tokio::test]
+async fn failed_reset_write_restores_the_previous_instance_ledger() {
+    let backend = tinystoragedrivers_core::MemoryStorage::new();
+    let inner = Arc::clone(backend.for_scope(&Scope::local()).unwrap().documents());
+    let flaky = Arc::new(FlakyDocs {
+        inner,
+        fail_puts: std::sync::atomic::AtomicBool::new(false),
+    });
+    let savings = Savings::with_documents(flaky.clone(), true);
+    savings.record(None, &req(200, 100)).await.unwrap();
+    assert_eq!(savings.stats(None).await.unwrap().total.events, 1);
+
+    flaky
+        .fail_puts
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(savings.reset(None).await.is_err());
+    assert_eq!(savings.stats(None).await.unwrap().total.events, 1);
+
+    flaky
+        .fail_puts
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    savings.reset(None).await.unwrap();
+    assert_eq!(savings.stats(None).await.unwrap().total.events, 0);
+}

@@ -35,6 +35,16 @@ fn configuring_one_memory_store_trims_only_that_stores_entries() {
 }
 
 #[test]
+fn memory_store_ttl_expires_and_removes_an_entry() {
+    let store = MemoryCcrStore::new(4, 1_024).with_ttl(Some(Duration::ZERO));
+    let put = store.put("short-lived scoped original");
+
+    assert!(put.retained());
+    assert_eq!(store.get(put.token()), None);
+    assert_eq!(store.stats(), (0, 0));
+}
+
+#[test]
 fn concurrent_configure_and_put_preserve_the_final_bounds() {
     use std::sync::{Arc, Barrier};
 

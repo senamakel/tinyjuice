@@ -11,6 +11,31 @@ fn handler() -> CcrMigrationHandler {
 }
 
 #[test]
+fn operation_selector_versions_only_the_existing_ccr_step() {
+    let schema = tinyjuice_drivers::storage_schema();
+    let ccr_step = schema
+        .steps
+        .iter()
+        .find(|step| step.id == CCR_PREFIX_STEP)
+        .expect("the owner's current schema contains the CCR migration step");
+    assert_eq!(
+        operation_for_step(ccr_step),
+        Some((
+            CCR_PREFIX_OPERATION.to_owned(),
+            CCR_PREFIX_OPERATION_VERSION
+        ))
+    );
+
+    for step in schema
+        .steps
+        .iter()
+        .filter(|step| step.id != CCR_PREFIX_STEP)
+    {
+        assert_eq!(operation_for_step(step), None);
+    }
+}
+
+#[test]
 fn ccr_blob_dispatch_uses_the_declared_schema_step() {
     let reply = handler().transform(MigrationPayload::BlobTarget(BlobTargetRequest {
         operation: CCR_PREFIX_OPERATION.into(),
