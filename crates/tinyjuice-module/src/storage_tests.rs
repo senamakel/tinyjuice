@@ -167,8 +167,10 @@ async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResu
     );
 
     // Switched off: new originals stay in memory only.
-    service.install(install_request(false)).await?;
-    service.install(install_request(false)).await?;
+    let mut disable = install_request(false);
+    disable.options.min_bytes_to_compress = 32;
+    disable.options.ccr_min_tokens = 1;
+    service.install(disable).await?;
     let memory_only = (0..200)
         .map(|index| {
             if index == 137 {
@@ -187,8 +189,10 @@ async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResu
             },
         )
         .await?;
+    assert!(output.applied);
     let token = output.ccr_token.ok_or("memory cache should retain the original")?;
     let key = format!("{}{token}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]);
+    assert!(host_blobs.get(&key).await?.is_none(), "nothing written to the durable tier");
     assert!(host_blobs.get(&key).await?.is_none(), "nothing written");
     Ok(())
 }
