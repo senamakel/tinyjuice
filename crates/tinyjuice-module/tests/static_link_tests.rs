@@ -21,6 +21,13 @@ async fn linked_module_is_admitted_and_serves_its_bus_name() {
         .attach_linked_with_config(module, serde_json::json!({}))
         .expect("linked module should be admitted");
     assert_eq!(info.manifest.bus_name.as_str(), BUS_NAME);
+    let provided: Vec<&str> = info
+        .manifest
+        .provides
+        .iter()
+        .map(|interface| interface.version.interface.as_str())
+        .collect();
+    assert_eq!(provided, ["ai.tinyhumans.tinyjuice.Compression", MIGRATION_INTERFACE]);
     assert!(matches!(
         info.state,
         ModuleState::Resolved
@@ -31,11 +38,8 @@ async fn linked_module_is_admitted_and_serves_its_bus_name() {
     let methods: Vec<&str> = info
         .manifest
         .provides
-        .iter()
-        .find(|interface| {
-            interface.version.interface.as_str() == "ai.tinyhumans.tinyjuice.Compression"
-        })
-        .expect("the compression interface should be advertised")
+        .first()
+        .expect("the primary interface should be advertised")
         .methods
         .iter()
         .map(tinybus::MemberName::as_str)
@@ -44,9 +48,8 @@ async fn linked_module_is_admitted_and_serves_its_bus_name() {
     let migration = info
         .manifest
         .provides
-        .iter()
-        .find(|interface| interface.version.interface.as_str() == MIGRATION_INTERFACE)
-        .expect("the migration interface should be advertised");
+        .get(1)
+        .expect("the migration interface should be advertised second");
     assert!(
         migration.methods.is_empty(),
         "the current ABI manifest attaches methods only to its primary interface"

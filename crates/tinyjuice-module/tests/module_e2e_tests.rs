@@ -50,14 +50,18 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
     assert_eq!(loaded.name, "tinyjuice-module");
     assert_eq!(loaded.manifest.bus_name.as_str(), BUS_NAME);
     assert_eq!(loaded.manifest.object_path.as_str(), OBJECT_PATH);
-    let methods: Vec<&str> = loaded
+    let provided: Vec<&str> = loaded
         .manifest
         .provides
         .iter()
-        .find(|interface| {
-            interface.version.interface.as_str() == "ai.tinyhumans.tinyjuice.Compression"
-        })
-        .expect("the compression interface should be advertised")
+        .map(|interface| interface.version.interface.as_str())
+        .collect();
+    assert_eq!(provided, ["ai.tinyhumans.tinyjuice.Compression", MIGRATION_INTERFACE]);
+    let methods: Vec<&str> = loaded
+        .manifest
+        .provides
+        .first()
+        .expect("the primary interface should be advertised")
         .methods
         .iter()
         .map(tinybus::MemberName::as_str)
@@ -66,11 +70,8 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
     let migration = loaded
         .manifest
         .provides
-        .iter()
-        .find(|interface| {
-            interface.version.interface.as_str() == MIGRATION_INTERFACE
-        })
-        .expect("the migration interface should be advertised");
+        .get(1)
+        .expect("the migration interface should be advertised second");
     assert!(
         migration.methods.is_empty(),
         "the current ABI manifest attaches methods only to its primary interface"
