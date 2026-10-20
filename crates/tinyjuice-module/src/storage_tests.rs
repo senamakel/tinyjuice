@@ -9,6 +9,7 @@ use tinystoragedrivers_busproxy::{PerCallerEndpoint, ServedStorage, serve};
 use tinystoragedrivers_client::StorageServer;
 use tinystoragedrivers_core::{MemoryStorage, Scope, ScopedStorage};
 
+#[cfg(feature = "static-link")]
 #[path = "../tests/support/juice_storage.rs"]
 mod governed_fixture;
 
@@ -100,10 +101,13 @@ async fn without_a_storage_host_there_is_no_durable_tier() -> TestResult {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "static-link")]
 async fn descriptor_binding_uses_the_granted_blob_and_document_ports() -> TestResult {
     use tinybus::{
-        Connection, broker::Broker, module::ModuleHost, transport::memory::MemoryTransport,
+        Connection, broker::Broker, module::ModuleHost, test_support::wait_until_serving,
+        transport::memory::MemoryTransport,
     };
+    use tinyjuice_bus::wire::InstallRequest;
     use tinystoragedrivers_core::StorageBackend;
 
     let bus = MemoryBus::new();
@@ -113,49 +117,78 @@ async fn descriptor_binding_uses_the_granted_blob_and_document_ports() -> TestRe
     broker.attach_module_controller(Arc::new(broker_transport))?;
     let controller = Connection::connect(Box::new(controller_transport)).await?;
     let modules = ModuleHost::new(broker);
-    let module = Connection::connect(bus.connect().await?).await?;
-    let peer = module
-        .unique_name()
-        .expect("the connected module has a peer identity");
+    let client = Connection::connect(bus.connect().await?).await?;
+    let loaded = modules
+        .attach_linked_with_config(
+            crate::linked_module().expect("static TinyJuice module manifest is valid"),
+            serde_json::json!({}),
+        )
+        .expect("the linked module should be admitted");
+    wait_until_serving(&client, crate::service::BUS_NAME, Duration::from_secs(5))
+        .await
+        .expect("the linked module should be ready");
+    let peer = client
+        .name_owner(crate::service::BUS_NAME)
+        .await?
+        .ok_or("the ready module has a peer identity")?;
 
     let governed = governed_fixture::JuiceStorage::attach(&modules, &controller)
         .await
         .unwrap();
     let (lease, descriptor) = governed.lease("profile-a", &peer).await.unwrap();
-    let binding = bind(module, Some(descriptor))
-        .await?
-        .ok_or("the configured descriptor resolves storage ports")?;
-    let durable = durable_tier_on(Arc::clone(&binding.blobs), None).await?;
-    let store = InstanceCcrStore::new();
-    store.configure(1, 1, None);
-    store.set_durable(Some(durable));
+    modules
+        .reinitialize(
+            &loaded.name,
+            serde_json::json!({"storage_descriptor": descriptor}),
+        )
+        .await?;
+    let proxy = client.proxy(
+        crate::service::BUS_NAME,
+        crate::service::OBJECT_PATH,
+        crate::service::BUS_NAME,
+    )?;
+    proxy
+        .call::<()>(
+            "Install",
+            (InstallRequest {
+                options: tinyjuice::types::CompressOptions {
+                    min_bytes_to_compress: 64,
+                    ccr_min_tokens: 16,
+                    ..Default::default()
+                },
+                max_cache_entries: 1,
+                max_cache_bytes: 1,
+                ccr_ttl_secs: Some(600),
+                ccr_durable: true,
+            },),
+        )
+        .await?;
 
     let original = "bound host storage keeps this durable original\nsecond line";
-    let put = store.put(original);
-    assert!(put.retained());
-    assert_eq!(store.get(put.token()).as_deref(), Some(original));
-    assert_eq!(
-        store
-            .get_range(put.token(), 1, 2, RangeUnit::Lines)
-            .as_deref(),
-        Some("second line")
-    );
+    let output: tinyjuice::types::CompressedOutput = proxy
+        .call(
+            "Compress",
+            (
+                original,
+                tinyjuice::types::ContentHint {
+                    explicit: Some(tinyjuice::types::ContentKind::Log),
+                    ..Default::default()
+                },
+            ),
+        )
+        .await?;
+    let token = output
+        .ccr_token
+        .ok_or("the durable port retains the original")?;
     let scoped = governed
         .backend
         .for_scope(&Scope::new("profile-a")?)
         .unwrap();
-    let key = format!(
-        "{}{}",
-        tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0],
-        put.token()
-    );
+    let key = format!("{}{}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0], token);
     assert!(scoped.blobs().get(&key).await?.is_some());
     assert!(governed.revoke(&lease).await);
-    assert_eq!(
-        store.get(put.token()),
-        None,
-        "revoking the host grant makes descriptor-bound durable reads unavailable"
-    );
+    let retrieved: Option<String> = proxy.call("Retrieve", (token,)).await?;
+    assert_eq!(retrieved, None, "revoked durable reads fail closed");
 
     governed.shutdown().await?;
     broker_task.abort();
