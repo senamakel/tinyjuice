@@ -21,8 +21,8 @@ tinyjuice = { version = "0.11.0", path = "../..", default-features = false, feat
 # The interface vocabulary. Shared with hosts, so this adapter cannot drift
 # from what a caller was compiled against.
 tinyjuice-bus = { version = "0.11.0", path = "../tinyjuice-bus" }
-tinybus = { version = "=0.3.3", default-features = false, features = ["macros", "modules"] }
-tinybus-module = "=0.3.3"
+tinybus = { version = "=0.3.8", git = "https://github.com/tinyhumansai/tinybus", rev = "5e3c882c46b84fe319b38332123dd8acc3cd826e", default-features = false, features = ["macros", "modules"] }
+tinybus-module = { version = "=0.3.8", git = "https://github.com/tinyhumansai/tinybus", rev = "5e3c882c46b84fe319b38332123dd8acc3cd826e" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 serde_json = "1"
 # The CCR store's durable tier is blobs on the host's storage ports, reached
@@ -30,14 +30,15 @@ serde_json = "1"
 # TSD source revision as the bus and drivers. The module has no storage backend
 # or file of its own.
 tinyjuice-drivers = { path = "../tinyjuice-drivers" }
-tinystoragedrivers-core = { version = "=1.8.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "595723e1b1cabeb3d36f0c5b6ff2e11b458e7558" }
-tinystoragedrivers-busproxy = { version = "=1.8.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "595723e1b1cabeb3d36f0c5b6ff2e11b458e7558" }
+tinystoragedrivers-core = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "7354214b8834b71bb0acb4a7c93b3efa051001b8" }
+tinystoragedrivers-busproxy = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "7354214b8834b71bb0acb4a7c93b3efa051001b8" }
+tinystoragedrivers-tinybus = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "7354214b8834b71bb0acb4a7c93b3efa051001b8", features = ["migration-delivery"] }
 log = "0.4"
 
 [dev-dependencies]
 # Tests serve the storage objects on the in-memory broker the module connects to.
-tinystoragedrivers-client = { version = "=1.8.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "595723e1b1cabeb3d36f0c5b6ff2e11b458e7558" }
-tinybus = { version = "=0.3.3", default-features = false, features = ["test-support"] }
+tinystoragedrivers-client = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "7354214b8834b71bb0acb4a7c93b3efa051001b8" }
+tinybus = { version = "=0.3.8", default-features = false, features = ["test-support"] }
 tempfile = "3"
 async-trait = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

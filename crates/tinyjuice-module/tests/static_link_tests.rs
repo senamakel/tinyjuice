@@ -2,14 +2,23 @@
 //! dynamic one, without a library file or exported C symbols.
 #![cfg(feature = "static-link")]
 
-use tinybus::module::{ModuleHost, ModuleState};
-use tinybus::test_support::{start_bus, wait_until_serving};
+use tinybus::module::ModuleState;
+use tinybus::test_support::wait_until_serving;
 use tinyjuice_module::{BUS_NAME, linked_module};
+
+#[path = "support/mod.rs"]
+mod support;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn linked_module_is_admitted_and_serves_its_bus_name() {
-    let (host, client, broker_task): (ModuleHost, _, _) =
-        start_bus().await.expect("memory bus should start");
+    let support::TrustedBus {
+        modules: host,
+        client,
+        broker_task,
+        ..
+    } = support::start_trusted_bus()
+        .await
+        .expect("restricted memory broker should start");
     let module = linked_module().expect("generated manifest is valid");
     let info = host
         .attach_linked_with_config(module, serde_json::json!({}))

@@ -1,21 +1,44 @@
 //! End-to-end proof that the built TinyJuice cdylib is admitted and serves
 //! compression and CCR retrieval through a real TinyBus broker.
 
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
-use tinybus::Connection;
-use tinybus::module::ModuleState;
-use tinybus::test_support::{admit_module, start_bus, wait_until_serving};
+use tinybus::{Connection, module::{ModuleHost, ModuleState}, test_support::{admit_module, wait_until_serving}};
 use tinyjuice::types::{AgentTokenjuiceCompression, CompressedOutput, ContentHint, ContentKind};
 use tinyjuice_bus::wire::CompactResponse;
 use tinyjuice_module::{BUS_NAME, OBJECT_PATH};
+use tinystoragedrivers_core::{
+    MemoryStorage, Scope, StorageBackend,
+    schema::{MigrateOptions, MigrationDeliveryClient, Registry, Schema, TransformKind},
+};
+use tinystoragedrivers_tinybus::migration::{
+    EXCHANGE_MEMBER, GET_SCHEMA_MEMBER, MIGRATION_INTERFACE, MIGRATION_OBJECT_PATH,
+    MigrationModuleClient,
+};
 
 const EXPECTED_METHODS: &[&str] = tinyjuice_bus::METHODS;
+
+#[path = "support/mod.rs"]
+mod support;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires TINYJUICE_TEST_MODULE to point at the built cdylib"]
 async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
-    let (modules, client, broker_task) = start_bus().await.expect("memory bus should start");
+    let support::TrustedBus {
+        bus,
+        modules,
+        client,
+        controller,
+        broker_task,
+    } = support::start_trusted_bus()
+        .await
+        .expect("restricted memory broker should start");
     let loaded = admit_module(&modules, "TINYJUICE_TEST_MODULE", "tinyjuice-module")
         .expect("module should load");
     assert_eq!(loaded.name, "tinyjuice-module");
@@ -33,6 +56,12 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
     wait_until_serving(&client, BUS_NAME, Duration::from_secs(5))
         .await
         .expect("module should become ready");
+    let module_peer: tinybus::BusName = BUS_NAME.parse().expect("module bus name");
+    let migration = migration_client_is_selected_and_confidential(&controller, &bus, &module_peer)
+        .await
+        .expect("selected controller should discover the schema");
+    assert_legacy_ccr_migrates_over_the_loaded_module(migration, &modules).await;
+
     let proxy = client
         .proxy(BUS_NAME, OBJECT_PATH, BUS_NAME)
         .expect("module proxy");
@@ -131,6 +160,130 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
     compact_with_calls_back_to_the_host_for_a_focused_summary(&client, &proxy).await;
     savings_are_computed_and_persisted_inside_the_loaded_module(&proxy).await;
     broker_task.abort();
+}
+
+async fn migration_client_is_selected_and_confidential(
+    controller: &Connection,
+    bus: &MemoryBus,
+    module_peer: &tinybus::BusName,
+) -> Result<MigrationModuleClient, Box<dyn std::error::Error>> {
+    let controller_proxy = controller.proxy(
+        BUS_NAME,
+        MIGRATION_OBJECT_PATH,
+        MIGRATION_INTERFACE,
+    )?;
+    assert!(
+        controller_proxy
+            .call::<serde_json::Value>(GET_SCHEMA_MEMBER, ())
+            .await
+            .is_err(),
+        "schema discovery must reject a nonconfidential call"
+    );
+
+    let outsider = Connection::connect(bus.connect().await?).await?;
+    let outsider_proxy = outsider.proxy(
+        BUS_NAME,
+        MIGRATION_OBJECT_PATH,
+        MIGRATION_INTERFACE,
+    )?;
+    let malformed = outsider_proxy
+        .call_confidential::<serde_json::Value>(EXCHANGE_MEMBER, serde_json::json!("secret-marker"))
+        .await
+        .expect_err("an unselected peer must be denied before decoding");
+    assert!(
+        !malformed.to_string().contains("secret-marker"),
+        "authorization failures must not reflect request content"
+    );
+    assert!(
+        MigrationModuleClient::discover(&outsider, module_peer)
+            .await
+            .is_err(),
+        "schema discovery must be bound to the selected controller"
+    );
+
+    let client = MigrationModuleClient::discover(controller, module_peer).await?;
+    let declaration = client.declaration();
+    assert_eq!(declaration.owner.as_str(), "juice");
+    assert_eq!(declaration.steps.len(), 1);
+    assert_eq!(declaration.steps[0].id, "ccr_prefix_v2");
+    assert_eq!(declaration.steps[0].transform.operation, "tinyjuice.ccr-prefix-v2");
+    assert_eq!(declaration.steps[0].transform.version, 1);
+    assert_eq!(declaration.steps[0].transform.kind, TransformKind::Blob);
+    Ok(client)
+}
+
+async fn assert_legacy_ccr_migrates_over_the_loaded_module(
+    client: MigrationModuleClient,
+    modules: &ModuleHost,
+) {
+    let now = Arc::new(AtomicU64::new(1_000));
+    let clock = Arc::clone(&now);
+    let backend = MemoryStorage::with_clock(Arc::new(move || clock.load(Ordering::SeqCst)));
+    let storage = backend.for_scope(&Scope::local()).expect("local scope");
+    let blobs = storage.blobs();
+    blobs
+        .put_expiring(
+            "tinyjuice_ccr/live",
+            b"still live".to_vec(),
+            Some("text/plain"),
+            Duration::from_millis(5_000),
+        )
+        .await
+        .expect("write the expiring legacy blob");
+    blobs
+        .put_expiring(
+            "tinyjuice_ccr/expired",
+            b"already expired".to_vec(),
+            Some("text/plain"),
+            Duration::from_millis(500),
+        )
+        .await
+        .expect("write the expired legacy blob");
+    blobs
+        .put("tinyjuice_ccr/persistent", b"no expiry".to_vec(), None)
+        .await
+        .expect("write the persistent legacy blob");
+    blobs
+        .put("other/keep", b"unrelated".to_vec(), None)
+        .await
+        .expect("write an unrelated blob");
+
+    now.store(4_000, Ordering::SeqCst);
+    let registry = Registry::compose_with_declarations(
+        std::iter::empty::<Schema>(),
+        [client.declaration().clone()],
+    )
+    .expect("compose the module's discovered declaration");
+    registry
+        .prepare(&backend)
+        .await
+        .expect("prepare the discovered schema");
+    let executor = MigrationDeliveryClient::new(Arc::new(client));
+    registry
+        .migrate_with_executor(&storage, &MigrateOptions::new(), &executor)
+        .await
+        .expect("run the module-owned blob transform");
+
+    let live = blobs
+        .get("juice/ccr/live")
+        .await
+        .expect("read migrated live blob")
+        .expect("live blob should be present");
+    assert_eq!(live.bytes, b"still live");
+    assert_eq!(live.meta.content_type.as_deref(), Some("text/plain"));
+    assert!(blobs.get("juice/ccr/expired").await.unwrap().is_none());
+    assert!(blobs.get("juice/ccr/persistent").await.unwrap().is_some());
+    assert!(blobs.get("other/keep").await.unwrap().is_some());
+
+    now.store(5_999, Ordering::SeqCst);
+    assert!(blobs.get("juice/ccr/live").await.unwrap().is_some());
+    now.store(6_000, Ordering::SeqCst);
+    assert!(
+        blobs.get("juice/ccr/live").await.unwrap().is_none(),
+        "migration must retain the source blob's original absolute expiry"
+    );
+    assert!(blobs.get("juice/ccr/persistent").await.unwrap().is_some());
+    assert!(matches!(modules.list()[0].state, ModuleState::Ready));
 }
 
 /// The host half of the summary stage, as a test host serves it: answers
