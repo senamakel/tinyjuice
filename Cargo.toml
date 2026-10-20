@@ -144,9 +144,8 @@ required-features = ["tinytools"]
 [patch."https://github.com/tinyhumansai/tinybus"]
 tinybus = { path = "vendor/tinybus/crates/tinybus" }
 
-# TinyBus is not on crates.io. Patch its Git and registry sources to this
-# published SDK checkout so the module and storage adapters share one bus.
+# The TinyBus transport and macros use this checkout; the module SDK is pinned
+# directly to the same published Git revision as the TSD adapter.
 [patch.crates-io]
 tinybus = { path = "vendor/tinybus/crates/tinybus" }
-tinybus-module = { path = "vendor/tinybus/crates/tinybus-module" }
 tinybus-macros = { path = "vendor/tinybus/crates/tinybus-macros" }
