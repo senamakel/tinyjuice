@@ -19,7 +19,7 @@ use once_cell::sync::OnceCell;
 use serde_json::Value;
 use std::sync::{Arc, RwLock};
 
-use super::compress::{route, route_with_store};
+use super::compress::route_with_store;
 use super::cache::store::{CcrStore, GlobalCcrStore};
 use super::llm::{GenerateCallback, global_generate_callback};
 use super::summarize::SummaryState;
@@ -188,11 +188,42 @@ pub async fn compact_tool_output(call: ToolOutputCall<'_>) -> ToolOutputReport {
     compact_tool_output_inner(call, None).await
 }
 
+/// Compact one result using owner-scoped options, CCR storage, summary state
+/// and host generation. Module adapters should use this entry point rather
+/// than the process-global convenience API.
+pub async fn compact_tool_output_with_context(
+    call: ToolOutputCall<'_>,
+    options: &CompressOptions,
+    store: &dyn CcrStore,
+    summaries: &SummaryState,
+    generate: Arc<GenerateCallback>,
+) -> ToolOutputReport {
+    compact_tool_output_with_options(call, options, store, summaries, generate).await
+}
+
 /// [`compact_tool_output`] with an optional explicit option set, so a caller
 /// (or test) need not mutate the process-wide options.
 async fn compact_tool_output_inner(
     call: ToolOutputCall<'_>,
     opts_override: Option<CompressOptions>,
+) -> ToolOutputReport {
+    let options = opts_override.unwrap_or_else(current_options);
+    compact_tool_output_with_options(
+        call,
+        &options,
+        &GlobalCcrStore,
+        SummaryState::global(),
+        global_generate_callback(),
+    )
+    .await
+}
+
+async fn compact_tool_output_with_options(
+    call: ToolOutputCall<'_>,
+    options: &CompressOptions,
+    store: &dyn CcrStore,
+    summaries: &SummaryState,
+    generate: Arc<GenerateCallback>,
 ) -> ToolOutputReport {
     let ToolOutputCall {
         tool_name,
@@ -207,7 +238,7 @@ async fn compact_tool_output_inner(
     } = call;
     let original_bytes = output.len();
 
-    let opts = match opts_override.map_or_else(|| options_for_agent(profile), Ok) {
+    let mut opts = match options_for_agent(profile, options) {
         Ok(opts) => opts,
         Err(rule_id) => {
             log::debug!(
@@ -258,7 +289,7 @@ async fn compact_tool_output_inner(
         AgentTokenjuiceCompression::Full => Some(opts.clone()),
         AgentTokenjuiceCompression::Light if context_token.is_some() => {
             let mut summary_opts = opts.clone();
-            summary_opts.ccr_enabled = current_options().ccr_enabled;
+            summary_opts.ccr_enabled = options.ccr_enabled;
             Some(summary_opts)
         }
         _ => None,
@@ -272,7 +303,8 @@ async fn compact_tool_output_inner(
             >= opts.ccr_min_tokens;
     let summary_opts = summary_opts.filter(|_| !handle_mode_applies);
     if let Some(summary_opts) = summary_opts {
-        let outcome = super::summarize::maybe_summarize(
+        let outcome = super::summarize::maybe_summarize_with_context(
+            summaries,
             super::summarize::SummaryInput {
                 tool_name,
                 content: output,
@@ -281,6 +313,8 @@ async fn compact_tool_output_inner(
                 scope,
             },
             &summary_opts,
+            store,
+            generate.clone(),
         )
         .await;
         match outcome {
@@ -355,9 +389,9 @@ async fn compact_tool_output_inner(
         // The summary stage may have run below the CCR floor; the fallback must
         // still produce a handle.
         opts.ccr_min_tokens = 0;
-        opts.ccr_enabled = current_options().ccr_enabled;
+        opts.ccr_enabled = options.ccr_enabled;
     }
-    let res = route(input, &opts).await;
+    let res = route_with_store(input, &opts, store).await;
     let stats = CompactionStats {
         tool_name: tool_name.to_string(),
         original_bytes,
