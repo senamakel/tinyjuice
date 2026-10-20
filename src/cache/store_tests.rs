@@ -11,6 +11,24 @@ fn round_trips() {
 }
 
 #[test]
+fn configuring_one_memory_store_trims_only_that_stores_entries() {
+    let first = MemoryCcrStore::new(4, 1_024);
+    let second = MemoryCcrStore::new(4, 1_024);
+    let first_token = first.put("first profile original").token().to_owned();
+    let second_token = first.put("second entry in first profile").token().to_owned();
+    let other_token = second.put("first profile original").token().to_owned();
+
+    first.configure(1, 1_024, None);
+
+    assert_eq!(first.get(&first_token), None);
+    assert_eq!(
+        first.get(&second_token).as_deref(),
+        Some("second entry in first profile")
+    );
+    assert_eq!(second.get(&other_token).as_deref(), Some("first profile original"));
+}
+
+#[test]
 fn idempotent_hash() {
     let a = offload("ccr idempotent unique payload bravo content");
     let b = offload("ccr idempotent unique payload bravo content");
