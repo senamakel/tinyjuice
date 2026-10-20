@@ -238,7 +238,7 @@ async fn compact_tool_output_with_options(
     } = call;
     let original_bytes = output.len();
 
-    let mut opts = match options_for_agent(profile, options) {
+    let opts = match options_for_agent(profile, options) {
         Ok(opts) => opts,
         Err(rule_id) => {
             log::debug!(

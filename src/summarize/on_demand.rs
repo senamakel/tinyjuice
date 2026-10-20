@@ -109,7 +109,7 @@ pub async fn summarize_on_demand_with_context(
         return OnDemandSummary::Fallback(Some(UnavailableReason::Disabled));
     }
 
-    let receiver = join_or_start(state, key, generate, || {
+    let mut receiver = join_or_start(state, key, generate, || {
         let (body, prompt) = if sampled {
             let sample = sample_for_budget(raw, focus, cap_tokens.saturating_mul(CHARS_PER_TOKEN));
             let prompt = framed_prompt(tool, focus, &sample, |tag| {

@@ -241,7 +241,7 @@ pub async fn maybe_summarize_with_context(
             "[tinyjuice::summarize] reusing the summary of an identical payload tool={tool} bytes={}",
             raw.len()
         );
-        return finish(raw, summary, opts);
+        return finish(raw, summary, opts, store);
     }
     if state.breaker_tripped(scope) {
         log::warn!("[tinyjuice::summarize] breaker open, skipping tool={tool}");
