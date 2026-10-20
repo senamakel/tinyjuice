@@ -61,6 +61,10 @@ rejections remain distinct from transport failures.
 
 
 Contract 3.0 replaces the host-supplied `diskTierRoot` install setting with an
-explicit `ccrDurable` capability. This changes the meaning of old host requests,
-so the module rejects contract 2.x hosts rather than silently ignoring their
-persistence request.
+explicit `ccrDurable` capability. Host adapters must verify contract
+compatibility with `is_compatible` before exposing this module or sending its
+`Install` request; the module cannot infer the caller's contract version from
+that request. As a second boundary, deserialization rejects any `diskTierRoot`
+field, including `null`, rather than silently ignoring an old persistence
+request. Unrelated unknown fields remain forward-compatible, and an omitted
+`ccrDurable` still defaults to `false`.
