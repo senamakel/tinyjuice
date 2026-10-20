@@ -12,7 +12,7 @@ publish = false
 [workspace]
 
 [dependencies]
-tinyjuice = { version = "0.10.10", path = "../..", features = ["tinytools"] }
+tinyjuice = { version = "0.11.0", path = "../..", features = ["tinytools"] }
 tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness" }
 tinyinference-llm = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
 tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools" }

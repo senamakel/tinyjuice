@@ -25,8 +25,8 @@ on whatever backend it has. `tinyjuice-module` uses the host storage bus
   retaining an original only when it reports success under the content hash
   that callers advertise as the recovery token.
 - A memory miss in `retrieve` / `retrieve_range` falls through to the tier.
-- It is independent of the file-backed `enable_disk_tier`, which stays for
-  library users.
+- The library has no file-backed persistence tier. Standalone CLI cache
+  commands use their separate `cli-disk-tier` feature.
 - Store calls may block, so a host must not call them from a single-threaded
   runtime that also drives the store's transport.
 

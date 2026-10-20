@@ -16,7 +16,7 @@ async fn service_compresses_and_retrieves_a_large_log() {
             max_cache_entries: 8,
             max_cache_bytes: 1024 * 1024,
             ccr_ttl_secs: None,
-            disk_tier_root: None,
+            ccr_durable: false,
         })
         .await
         .expect("install should succeed");
@@ -277,11 +277,9 @@ async fn typed_queries_preserve_results_and_structured_errors() {
 }
 
 #[tokio::test]
-async fn savings_service_records_persists_and_resets_totals() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("savings.json");
+async fn savings_service_records_and_resets_totals() {
     Compression::default()
-        .configure_savings(path.to_string_lossy().into())
+        .configure_savings("ignored".into())
         .await
         .unwrap();
     Compression::default().reset_savings().await.unwrap();
@@ -298,7 +296,6 @@ async fn savings_service_records_persists_and_resets_totals() {
     let stats = Compression::default().savings_stats().await.unwrap();
     assert_eq!(stats.total.tokens_saved, 60);
     assert_eq!(stats.by_model["test-model"].events, 1);
-    assert!(path.exists());
     Compression::default().reset_savings().await.unwrap();
     assert_eq!(
         Compression::default()

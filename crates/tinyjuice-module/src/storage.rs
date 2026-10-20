@@ -12,10 +12,24 @@ use std::time::Duration;
 use tinybus::Connection;
 use tinyjuice::cache::store::{CcrPutResult, CcrStore, RangeUnit};
 use tinyjuice_drivers::BlobCcrStore;
-use tinystoragedrivers_core::{BlobStore, StorageBackend};
+use tinystoragedrivers_core::{BlobStore, DocumentStore, StorageBackend};
 
 /// The host's blob port, connected through `connection`, when it serves one.
 async fn blobs(connection: Connection) -> Option<Arc<dyn BlobStore>> {
+    scoped(connection)
+        .await
+        .map(|scoped| Arc::clone(scoped.blobs()))
+}
+
+/// The host's document port, connected through `connection`, when it serves one.
+pub(crate) async fn documents(connection: Connection) -> Option<Arc<dyn DocumentStore>> {
+    scoped(connection)
+        .await
+        .map(|scoped| Arc::clone(scoped.documents()))
+}
+
+/// The module's scope of the host's storage, when the host serves one.
+async fn scoped(connection: Connection) -> Option<tinystoragedrivers_core::ScopedStorage> {
     let bus = match tinystoragedrivers_busproxy::connect_storage(connection).await {
         Ok(bus) => bus,
         Err(error) => {
@@ -24,7 +38,7 @@ async fn blobs(connection: Connection) -> Option<Arc<dyn BlobStore>> {
         }
     };
     match bus.for_scope(&tinystoragedrivers_busproxy::module_scope_label()) {
-        Ok(scoped) => Some(Arc::clone(scoped.blobs())),
+        Ok(scoped) => Some(scoped),
         Err(error) => {
             log::warn!("[tinyjuice_module] storage bus scope refused: {error}");
             None

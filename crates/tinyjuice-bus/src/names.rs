@@ -39,14 +39,19 @@ pub mod methods {
     pub const QUERY: &str = "Query";
     /// Convert HTML to Markdown inside the module.
     pub const EXTRACT_HTML: &str = "ExtractHtml";
-    /// Sets the savings snapshot path and loads an existing snapshot once.
+    /// Deprecated since contract 2.3: a no-op. Savings live in the host's
+    /// document store (`juice.savings`), so there is no snapshot path to set.
     pub const CONFIGURE_SAVINGS: &str = "ConfigureSavings";
     /// Records a saving with the host-resolved model input price.
     pub const RECORD_SAVINGS: &str = "RecordSavings";
-    /// Returns the current persisted-format savings totals.
+    /// Returns the current savings totals.
     pub const SAVINGS_STATS: &str = "SavingsStats";
-    /// Clears savings totals and persists the empty snapshot.
+    /// Clears savings totals, in memory and in storage.
     pub const RESET_SAVINGS: &str = "ResetSavings";
+    /// Adds a legacy savings snapshot (a [`SavingsAggregate`](crate::savings::SavingsAggregate))
+    /// when the module has recorded nothing yet; answers whether it took it.
+    /// Added in contract 2.3.
+    pub const IMPORT_SAVINGS: &str = "ImportSavings";
     /// Reports what the cache is holding.
     pub const CACHE_STATS: &str = "CacheStats";
 }
@@ -77,4 +82,5 @@ pub const METHODS: &[&str] = &[
     methods::RECORD_SAVINGS,
     methods::SAVINGS_STATS,
     methods::RESET_SAVINGS,
+    methods::IMPORT_SAVINGS,
 ];

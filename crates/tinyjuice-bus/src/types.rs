@@ -496,10 +496,6 @@ pub struct CompressOptions {
     pub repl_handle: bool,
     /// Character budget for the preview returned in `repl_handle` mode.
     pub repl_preview_chars: usize,
-    /// When set in `repl_handle` mode, the full original is also written to
-    /// `<dir>/<token>.txt` so an agent can scrape it with its own program.
-    #[serde(default)]
-    pub repl_save_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for CompressOptions {
@@ -531,7 +527,6 @@ impl Default for CompressOptions {
             llm_summary_timeout_ms: 8_000,
             repl_handle: false,
             repl_preview_chars: 1_200,
-            repl_save_dir: None,
         }
     }
 }
@@ -567,9 +562,6 @@ pub struct CompressedOutput {
     /// Compact shape/size description of the stored original (`repl_handle` mode).
     #[serde(default)]
     pub stats: Option<String>,
-    /// Path of the plain-text copy of the original, if one was saved.
-    #[serde(default)]
-    pub saved_path: Option<std::path::PathBuf>,
 }
 
 impl CompressedOutput {
@@ -588,7 +580,6 @@ impl CompressedOutput {
             original_bytes: len,
             compacted_bytes: len,
             stats: None,
-            saved_path: None,
         }
     }
 }

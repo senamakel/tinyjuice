@@ -213,5 +213,5 @@ pub fn record_event(record: SavingsRecord) {
 #[path = "savings_tests.rs"]
 mod tests;
 
-/// Model-attributed totals and snapshot persistence behind the module contract.
+/// Model-attributed totals behind the module contract. In-memory only since contract 2.3: `SavingsLedger::configure(&Path)` and its snapshot file are gone; the module persists the aggregate in the host's `juice.savings` document and restores it with `SavingsLedger::replace`. Direct library callers that relied on the file must persist `stats()` themselves.
 pub mod ledger;

@@ -3,14 +3,20 @@
 use super::*;
 
 #[test]
-fn the_contract_accepts_its_own_version_and_newer_minors() {
+fn the_contract_accepts_newer_minors_and_rejects_the_breaking_v2_contract() {
+    assert_eq!(CONTRACT_VERSION, (3, 0));
     assert!(is_compatible(CONTRACT_VERSION));
-    assert!(is_compatible((CONTRACT_VERSION.0, CONTRACT_VERSION.1 + 1)));
-    assert!(!is_compatible((CONTRACT_VERSION.0 + 1, 0)));
+    assert!(is_compatible((3, 1)));
     assert!(
-        !is_compatible((2, 0)),
-        "savings members require contract 2.1"
+        !is_compatible((2, 3)),
+        "v2.3 hosts requested disk persistence"
     );
+    assert!(
+        !is_compatible((2, 4)),
+        "v2.4 still uses diskTierRoot semantics"
+    );
+    assert!(!is_compatible((2, 5)));
+    assert!(!is_compatible((4, 0)));
 }
 
 #[test]

@@ -1,20 +1,29 @@
 //! Host-grantable resources required by TinyJuice.
 
-use crate::StorageNeeds;
+use std::sync::LazyLock;
 
-/// Blob namespace for CCR originals. The trailing slash keeps grants scoped to
-/// the existing `tinyjuice_ccr/<token>` keys without matching sibling names.
-const CCR_BLOB_PREFIX: &str = "tinyjuice_ccr/";
+use crate::StorageNeeds;
+use crate::storage_names::{CCR_BLOB_PREFIX, SAVINGS_COLLECTION};
+use tinystoragedrivers_bus::CollectionSpec;
+
+static SAVINGS_COLLECTIONS: LazyLock<[CollectionSpec; 1]> = LazyLock::new(|| {
+    [CollectionSpec {
+        name: SAVINGS_COLLECTION.into(),
+        indexes: Vec::new(),
+        ttl_field: None,
+        search: None,
+    }]
+});
 
 /// Storage resources TinyJuice needs from a host.
 ///
 /// This declaration is metadata for host policy; it does not grant access.
-pub const STORAGE_NEEDS: StorageNeeds<'static> = StorageNeeds {
-    collections: &[],
+pub static STORAGE_NEEDS: LazyLock<StorageNeeds<'static>> = LazyLock::new(|| StorageNeeds {
+    collections: &SAVINGS_COLLECTIONS[..],
     blob_prefixes: &[CCR_BLOB_PREFIX],
     stream_prefixes: &[],
     secret_prefixes: &[],
-};
+});
 
 #[cfg(test)]
 #[path = "storage_needs_tests.rs"]

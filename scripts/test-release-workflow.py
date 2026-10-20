@@ -4,10 +4,14 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / ".github/workflows/release.yml"
+MODULE_VERSION = tomllib.loads(
+    (ROOT / "crates/tinyjuice-module/Cargo.toml").read_text()
+)["package"]["version"]
 
 
 def resolve_script(workflow):
@@ -137,10 +141,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         powershell_template = re.search(r'^\$archive = Join-Path \$outputPath "(.+)"$', powershell_builder, re.MULTILINE)
         self.assertIsNotNone(shell_template)
         self.assertIsNotNone(powershell_template)
-        shell_archive = shell_template.group(1).replace("${crate}", crate).replace("${version}", "0.10.10").replace("${host}", "ubuntu-22.04-x86_64")
-        powershell_archive = powershell_template.group(1).replace("$Crate", crate).replace("$Version", "0.10.10").replace("$HostKey", "windows-2022-x86_64")
-        self.assertEqual(shell_archive, "tinyjuice-module-0.10.10-ubuntu-22.04-x86_64.tar.gz")
-        self.assertEqual(powershell_archive, "tinyjuice-module-0.10.10-windows-2022-x86_64.zip")
+        shell_archive = shell_template.group(1).replace("${crate}", crate).replace("${version}", MODULE_VERSION).replace("${host}", "ubuntu-22.04-x86_64")
+        powershell_archive = powershell_template.group(1).replace("$Crate", crate).replace("$Version", MODULE_VERSION).replace("$HostKey", "windows-2022-x86_64")
+        self.assertEqual(shell_archive, f"tinyjuice-module-{MODULE_VERSION}-ubuntu-22.04-x86_64.tar.gz")
+        self.assertEqual(powershell_archive, f"tinyjuice-module-{MODULE_VERSION}-windows-2022-x86_64.zip")
 
 
 if __name__ == "__main__":

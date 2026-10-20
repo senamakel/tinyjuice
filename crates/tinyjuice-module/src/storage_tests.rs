@@ -15,13 +15,27 @@ pub(crate) static INSTALL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_ne
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-struct Rig {
-    module: Connection,
-    backend: MemoryStorage,
+pub(crate) struct Rig {
+    pub(crate) module: Connection,
+    pub(crate) backend: MemoryStorage,
+    host: Connection,
     _served: Option<ServedStorage>,
 }
 
-async fn rig(serve_storage: bool) -> Result<Rig, Box<dyn std::error::Error>> {
+impl Rig {
+    /// Start serving storage on a rig built without it.
+    pub(crate) async fn serve_storage(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let bound = self.backend.clone();
+        let endpoint = PerCallerEndpoint::new(move |_sender| {
+            let scoped: ScopedStorage = bound.for_scope(&Scope::local()).ok()?;
+            Some(StorageServer::new(scoped))
+        });
+        self._served = Some(serve(&self.host, Arc::new(endpoint)).await?);
+        Ok(())
+    }
+}
+
+pub(crate) async fn rig(serve_storage: bool) -> Result<Rig, Box<dyn std::error::Error>> {
     let bus = MemoryBus::new();
     Broker::new().spawn(bus.clone());
     let backend = MemoryStorage::new();
@@ -37,11 +51,10 @@ async fn rig(serve_storage: bool) -> Result<Rig, Box<dyn std::error::Error>> {
         None
     };
     let module = Connection::connect(bus.connect().await?).await?;
-    // Keep the host connection alive for the life of the broker.
-    std::mem::forget(host);
     Ok(Rig {
         module,
         backend,
+        host,
         _served: served,
     })
 }
@@ -108,7 +121,7 @@ fn install_request(durable: bool) -> tinyjuice_bus::wire::InstallRequest {
         max_cache_entries: 8,
         max_cache_bytes: 1024 * 1024,
         ccr_ttl_secs: Some(600),
-        disk_tier_root: durable.then(|| "ignored-host-path".to_string()),
+        ccr_durable: durable,
     }
 }
 
@@ -226,5 +239,27 @@ async fn store_calls_run_in_place_on_a_current_thread_runtime() {
     assert_eq!(
         store.get_range("t", 0, 1, RangeUnit::Lines).as_deref(),
         Some("range")
+    );
+}
+
+#[test]
+fn the_module_grant_is_its_schema_at_module_scope() {
+    use tinystoragedrivers_core::schema::{Item, ScopeClass};
+    let schema = crate::storage_schema();
+    let grant: Vec<(&str, ScopeClass)> = schema
+        .items
+        .iter()
+        .map(|item| match item {
+            Item::Blobs { prefix, scope } => (prefix.as_str(), *scope),
+            Item::Collection { name, scope, .. } => (name.as_str(), *scope),
+            other => panic!("the module stores blobs and collections only, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        grant,
+        [
+            ("juice/ccr/", ScopeClass::Module),
+            ("juice.savings", ScopeClass::Module)
+        ]
     );
 }

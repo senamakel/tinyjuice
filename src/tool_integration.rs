@@ -39,7 +39,7 @@ fn options_cell() -> &'static RwLock<CompressOptions> {
 }
 
 /// Install the runtime [`CompressOptions`] (called once from config at startup).
-/// Also configures the CCR cache limits/disk tier indirectly via the caller.
+/// Also configures the in-memory CCR limits; hosts install durable stores separately.
 pub fn configure(opts: CompressOptions) {
     *options_cell().write().unwrap_or_else(|p| p.into_inner()) = opts;
 }
@@ -71,7 +71,7 @@ fn options_for_agent(profile: AgentTokenjuiceCompression) -> Result<CompressOpti
 }
 
 /// Install the full TokenJuice runtime configuration in one call at startup:
-/// router/compressor options, CCR cache limits, and the optional on-disk tier.
+/// router/compressor options and CCR cache limits.
 /// Kept free of the config-schema type so `tinyjuice` stays decoupled — the
 /// caller maps `Config.tinyjuice` into these primitives.
 #[allow(clippy::too_many_arguments)]
@@ -80,17 +80,9 @@ pub fn install_config(
     max_cache_entries: usize,
     max_cache_bytes: usize,
     ccr_ttl_secs: Option<u64>,
-    disk_tier_root: Option<std::path::PathBuf>,
 ) {
     configure(options);
     super::cache::configure(max_cache_entries, max_cache_bytes, ccr_ttl_secs);
-    // Enable or disable the disk tier to match the setting — a `None` here means
-    // the user turned it off, so clear any previously-installed disk root rather
-    // than leaving the process writing originals to disk until restart.
-    match disk_tier_root {
-        Some(root) => super::cache::enable_disk_tier(root),
-        None => super::cache::disable_disk_tier(),
-    }
     log::debug!("[tinyjuice] runtime config installed");
 }
 

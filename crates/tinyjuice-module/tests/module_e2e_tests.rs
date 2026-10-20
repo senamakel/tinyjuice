@@ -59,7 +59,7 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
                 "maxCacheEntries": 8,
                 "maxCacheBytes": 1048576,
                 "ccrTtlSecs": null,
-                "diskTierRoot": null
+                "ccrDurable": false
             }),),
         )
         .await
@@ -185,7 +185,7 @@ async fn compact_with_calls_back_to_the_host_for_a_focused_summary(
                 "maxCacheEntries": 8,
                 "maxCacheBytes": 1048576,
                 "ccrTtlSecs": null,
-                "diskTierRoot": null
+                "ccrDurable": false
             }),),
         )
         .await
@@ -398,10 +398,8 @@ async fn typed_queries_execute_in_the_loaded_artifact(proxy: &tinybus::Proxy, to
 async fn savings_are_computed_and_persisted_inside_the_loaded_module(proxy: &tinybus::Proxy) {
     use tinyjuice_bus::names::methods;
     use tinyjuice_bus::savings::{RecordSavingsRequest, SavingsAggregate};
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("savings.json");
     proxy
-        .call::<()>(methods::CONFIGURE_SAVINGS, (path.to_str().unwrap(),))
+        .call::<()>(methods::CONFIGURE_SAVINGS, ("ignored",))
         .await
         .unwrap();
     proxy.call::<()>(methods::RESET_SAVINGS, ()).await.unwrap();
@@ -421,9 +419,7 @@ async fn savings_are_computed_and_persisted_inside_the_loaded_module(proxy: &tin
     let stats: SavingsAggregate = proxy.call(methods::SAVINGS_STATS, ()).await.unwrap();
     assert_eq!(stats.total.tokens_saved, 1_000_000);
     assert_eq!(stats.by_model["test-model"].cost_saved_usd, 3.0);
-    let persisted: SavingsAggregate =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(persisted.by_compressor["generic"].events, 1);
+    assert_eq!(stats.by_compressor["generic"].events, 1);
     proxy.call::<()>(methods::RESET_SAVINGS, ()).await.unwrap();
     let stats: SavingsAggregate = proxy.call(methods::SAVINGS_STATS, ()).await.unwrap();
     assert_eq!(stats.total.events, 0);

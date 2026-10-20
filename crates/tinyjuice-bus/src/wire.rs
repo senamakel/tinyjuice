@@ -22,10 +22,9 @@ pub struct InstallRequest {
     /// How long a retrievable original stays retrievable. `None` keeps the
     /// module's own default.
     pub ccr_ttl_secs: Option<u64>,
-    /// Whether originals outlive memory. `Some` puts them on the host's storage
-    /// bus (the path itself is no longer written to); `None` keeps the cache in
-    /// memory only.
-    pub disk_tier_root: Option<String>,
+    /// Whether originals outlive memory through the host's durable CCR store.
+    #[serde(default)]
+    pub ccr_durable: bool,
 }
 
 /// What `CompactWith` takes: `Compact`'s positional arguments plus the
@@ -217,3 +216,7 @@ pub enum HtmlError {
 
 /// Markdown or a structured extraction error.
 pub type HtmlResponse = Result<String, HtmlError>;
+
+#[cfg(test)]
+#[path = "wire_tests.rs"]
+mod tests;

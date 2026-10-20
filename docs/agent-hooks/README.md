@@ -15,19 +15,20 @@ Use `tinyjuice update <host>` to refresh an installed hook and
 Install from crates.io:
 
 ```sh
-cargo install tinyjuice --locked
+cargo install tinyjuice --features cli-disk-tier --locked
 ```
 
 For development builds, install from Git:
 
 ```sh
-cargo install --git https://github.com/tinyhumansai/tinyjuice --locked --bin tinyjuice
+cargo install --git https://github.com/tinyhumansai/tinyjuice \
+  --features cli-disk-tier --locked --bin tinyjuice
 ```
 
 Or install the exact code in a local checkout:
 
 ```sh
-cargo install --path . --locked --bin tinyjuice
+cargo install --path . --features cli-disk-tier --locked --bin tinyjuice
 ```
 
 Make sure Cargo's bin directory is on `PATH` before installing hooks:

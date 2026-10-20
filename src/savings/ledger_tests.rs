@@ -51,73 +51,43 @@ fn malformed_price_is_unpriced_and_keeps_snapshots_serializable() {
 }
 
 #[test]
-fn snapshot_round_trip_and_reset_preserve_existing_dashboard_shape() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("state/tokenjuice_savings.json");
+fn replace_restores_totals_and_later_records_accumulate() {
+    let source = SavingsLedger::new();
+    source.record(&request("m", 2000, 1000, Some(3.0)));
+    let restored = SavingsLedger::new();
+    restored.replace(source.stats());
+    assert_eq!(restored.stats().total.tokens_saved, 1000);
+    restored.record(&request("m", 2000, 1000, Some(3.0)));
+    assert_eq!(restored.stats().total.events, 2);
+    restored.reset();
+    assert_eq!(restored.stats().total.events, 0);
+}
+
+#[test]
+fn absorb_adds_counts_made_before_a_stored_aggregate_was_read() {
+    let stored = SavingsLedger::new();
+    stored.record(&request("m", 2000, 1000, Some(3.0)));
+    let early = SavingsLedger::new();
+    early.record(&request("m", 400, 100, Some(3.0)));
+    early.record(&request("other", 400, 300, None));
+    let merged = SavingsLedger::new();
+    merged.replace(stored.stats());
+    merged.absorb(&early.stats());
+    let aggregate = merged.stats();
+    assert_eq!(aggregate.total.events, 3);
+    assert_eq!(aggregate.total.tokens_saved, 1400);
+    assert_eq!(aggregate.by_model["m"].events, 2);
+    assert_eq!(aggregate.by_model["other"].tokens_saved, 100);
+}
+
+#[test]
+fn the_aggregate_keeps_its_camel_case_wire_shape() {
     let ledger = SavingsLedger::new();
-    ledger.configure(&path);
     ledger.record(&request("m", 2000, 1000, Some(3.0)));
-    let saved: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(saved["total"]["tokensSaved"], 1000);
-    assert_eq!(saved["total"]["originalTokens"], 2000);
-    assert_eq!(saved["byModel"]["m"]["events"], 1);
-    assert_eq!(saved["byCompressor"]["smartcrusher"]["events"], 1);
-    assert!(saved["total"].get("tokens_saved").is_none());
-    let resumed = SavingsLedger::new();
-    resumed.configure(&path);
-    assert_eq!(resumed.stats().total.tokens_saved, 1000);
-    resumed.reset();
-    let empty = SavingsLedger::new();
-    empty.configure(&path);
-    assert_eq!(empty.stats().total.events, 0);
-}
-
-#[test]
-fn repeated_configure_does_not_reload_a_stale_snapshot() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("savings.json");
-    let ledger = SavingsLedger::new();
-    ledger.configure(&path);
-    ledger.record(&request("m", 2000, 1000, None));
-    std::fs::write(
-        &path,
-        serde_json::to_string(&SavingsAggregate::default()).unwrap(),
-    )
-    .unwrap();
-    ledger.configure(&path);
-    assert_eq!(ledger.stats().total.tokens_saved, 1000);
-}
-
-#[test]
-fn missing_or_malformed_snapshots_leave_in_memory_totals_intact() {
-    let dir = tempfile::tempdir().unwrap();
-    let ledger = SavingsLedger::new();
-    ledger.record(&request("m", 2000, 1000, None));
-    ledger.configure(&dir.path().join("absent.json"));
-    let invalid = dir.path().join("invalid.json");
-    std::fs::write(&invalid, "{").unwrap();
-    ledger.configure(&invalid);
-    assert_eq!(ledger.stats().total.tokens_saved, 1000);
-}
-
-#[test]
-fn loads_a_pre_migration_openhuman_snapshot() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("savings.json");
-    std::fs::write(&path, r#"{
-        "total":{"events":1,"originalTokens":2000,"compactedTokens":1000,"tokensSaved":1000,"costSavedUsd":0.003},
-        "byModel":{"claude-sonnet-4-6":{"events":1,"originalTokens":2000,"compactedTokens":1000,"tokensSaved":1000,"costSavedUsd":0.003}},
-        "byCompressor":{"smartcrusher":{"events":1,"originalTokens":2000,"compactedTokens":1000,"tokensSaved":1000,"costSavedUsd":0.003}}
-    }"#).unwrap();
-    let ledger = SavingsLedger::new();
-    ledger.configure(&path);
-    assert_eq!(ledger.stats().total.tokens_saved, 1000);
-    ledger.record(&request("claude-sonnet-4-6", 2000, 1000, Some(3.0)));
-    let aggregate = ledger.stats();
-    assert_eq!(aggregate.total.events, 2);
-    assert_eq!(aggregate.by_model["claude-sonnet-4-6"].tokens_saved, 2000);
-    assert!((aggregate.by_compressor["smartcrusher"].cost_saved_usd - 0.006).abs() < 1e-10);
+    let wire = serde_json::to_value(ledger.stats()).unwrap();
+    assert_eq!(wire["total"]["tokensSaved"], 1000);
+    assert_eq!(wire["byModel"]["m"]["events"], 1);
+    assert!(wire["total"].get("tokens_saved").is_none());
 }
 
 #[test]

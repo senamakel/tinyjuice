@@ -15,8 +15,10 @@
 //! [`Blocking`]: tinystoragedrivers_core::Blocking
 
 mod blob_store;
+mod storage;
 
 pub use blob_store::{BlobCcrStore, CCR_PREFIX};
+pub use storage::storage_schema;
 
 #[cfg(test)]
 #[path = "faulty_tests.rs"]
