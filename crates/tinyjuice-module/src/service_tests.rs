@@ -335,7 +335,7 @@ async fn setup_serves_detection_and_forwards_model_calls_to_the_host() {
     let module = Connection::connect(bus.connect().await.unwrap())
         .await
         .unwrap();
-    setup(module).await.unwrap();
+    setup_connection_services(module).await.unwrap();
     let proxy = host.proxy(BUS_NAME, OBJECT_PATH, BUS_NAME).unwrap();
     let detected: String = proxy
         .call(

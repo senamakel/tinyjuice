@@ -285,9 +285,11 @@ async fn compact_request(request: CompactRequest) -> CompactResponse {
 }
 
 async fn setup(context: ModuleSetupContext) -> BusResult<()> {
-    let connection = context.connection().clone();
     crate::migration::serve(&context).await?;
+    setup_connection_services(context.connection().clone()).await
+}
 
+async fn setup_connection_services(connection: Connection) -> BusResult<()> {
     // The summary stage's model call goes to the same host object: the module
     // writes the prompt, the host owns the model and the turn it runs under.
     let llm_connection = connection.clone();
