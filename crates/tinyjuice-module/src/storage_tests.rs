@@ -130,12 +130,28 @@ async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResu
     use crate::service::Compression;
     let _install = INSTALL.lock().await;
     let rig = rig(true).await?;
-    let service = Compression::new(Some(rig.module.clone()), None, false);
+    let storage = crate::storage::bind(rig.module.clone(), None)
+        .await?
+        .ok_or("host storage")?;
+    let service = Compression::new(Some(rig.module.clone()), Some(storage), false);
     let host_blobs = Arc::clone(rig.backend.for_scope(&Scope::local())?.blobs());
 
-    service.install(install_request(true)).await?;
-    let content = "install wired durable tier fixture original";
-    let token = tinyjuice::cache::offload(content);
+    let mut install = install_request(true);
+    install.options.min_bytes_to_compress = 32;
+    install.options.ccr_min_tokens = 1;
+    install.max_cache_bytes = 1;
+    service.install(install).await?;
+    let content = "install wired durable tier fixture original\n".repeat(20);
+    let output = service
+        .compress(
+            content.clone(),
+            tinyjuice::types::ContentHint {
+                explicit: Some(tinyjuice::types::ContentKind::Log),
+                ..Default::default()
+            },
+        )
+        .await?;
+    let token = output.ccr_token.ok_or("offload was not retained")?;
     let key = format!("{}{token}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]);
     assert!(
         host_blobs.get(&key).await?.is_some(),
@@ -144,8 +160,17 @@ async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResu
 
     // Switched off: new originals stay in memory only.
     service.install(install_request(false)).await?;
-    let memory_only = "install cleared durable tier fixture original";
-    let token = tinyjuice::cache::offload(memory_only);
+    let memory_only = "install cleared durable tier fixture original\n".repeat(20);
+    let output = service
+        .compress(
+            memory_only,
+            tinyjuice::types::ContentHint {
+                explicit: Some(tinyjuice::types::ContentKind::Log),
+                ..Default::default()
+            },
+        )
+        .await?;
+    assert!(output.ccr_token.is_none());
     let key = format!("{}{token}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]);
     assert!(host_blobs.get(&key).await?.is_none(), "nothing written");
     Ok(())

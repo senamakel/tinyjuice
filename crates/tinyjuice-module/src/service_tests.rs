@@ -133,7 +133,9 @@ async fn compression_services_keep_durable_ccr_in_their_own_storage() {
 async fn service_repl_greps_a_stored_output_and_reports_bad_input() {
     let service = Compression::default();
     use tinyjuice::cache::CcrStore;
-    let token = tinyjuice::cache::GlobalCcrStore
+    let token = service
+        .state
+        .ccr
         .put("alpha\nbeta needle\ngamma\n")
         .token()
         .to_string();
@@ -245,7 +247,9 @@ async fn service_detects_compacts_and_reads_ranges() {
         .await
         .unwrap();
     assert_eq!(compact_with.text, compact.text);
-    let token = tinyjuice::cache::GlobalCcrStore
+    let token = service
+        .state
+        .ccr
         .put("alpha\nbeta\ngamma")
         .token()
         .to_string();
@@ -278,7 +282,10 @@ async fn service_detects_compacts_and_reads_ranges() {
 async fn typed_queries_preserve_results_and_structured_errors() {
     use tinyjuice::cache::CcrStore;
     use tinyjuice_bus::wire::{QueryError, QueryRequest, QueryTarget};
-    let token = tinyjuice::cache::GlobalCcrStore
+    let service = Compression::default();
+    let token = service
+        .state
+        .ccr
         .put("alpha\nbeta needle")
         .token()
         .to_string();
@@ -288,7 +295,7 @@ async fn typed_queries_preserve_results_and_structured_errors() {
             content: "alpha\nbeta needle".into(),
         },
     ] {
-        let result = Compression::default()
+        let result = service
             .query(QueryRequest {
                 target,
                 op: serde_json::from_value(serde_json::json!({"op":"find","query":"needle"}))
@@ -323,7 +330,7 @@ async fn typed_queries_preserve_results_and_structured_errors() {
         ),
     ] {
         assert_eq!(
-            Compression::default()
+            service
                 .query(QueryRequest {
                     target,
                     op: serde_json::from_value(op).unwrap(),
@@ -336,7 +343,7 @@ async fn typed_queries_preserve_results_and_structured_errors() {
             Err(expected)
         );
     }
-    let result = Compression::default()
+    let result = service
         .query(QueryRequest {
             target: QueryTarget::Content {
                 content: "alpha".into(),
@@ -354,12 +361,13 @@ async fn typed_queries_preserve_results_and_structured_errors() {
 
 #[tokio::test]
 async fn savings_service_records_and_resets_totals() {
-    Compression::default()
+    let service = Compression::default();
+    service
         .configure_savings("ignored".into())
         .await
         .unwrap();
-    Compression::default().reset_savings().await.unwrap();
-    Compression::default()
+    service.reset_savings().await.unwrap();
+    service
         .record_savings(tinyjuice_bus::savings::RecordSavingsRequest {
             model: "test-model".into(),
             compressor: "test-compressor".into(),
@@ -369,12 +377,12 @@ async fn savings_service_records_and_resets_totals() {
         })
         .await
         .unwrap();
-    let stats = Compression::default().savings_stats().await.unwrap();
+    let stats = service.savings_stats().await.unwrap();
     assert_eq!(stats.total.tokens_saved, 60);
     assert_eq!(stats.by_model["test-model"].events, 1);
-    Compression::default().reset_savings().await.unwrap();
+    service.reset_savings().await.unwrap();
     assert_eq!(
-        Compression::default()
+        service
             .savings_stats()
             .await
             .unwrap()
@@ -390,7 +398,8 @@ struct SummaryHost;
 #[tinybus::interface(name = "ai.tinyhumans.tinyjuice.MlHost")]
 impl SummaryHost {
     async fn generate(&self, request: GenerateRequest) -> BusResult<Option<String>> {
-        assert_eq!(request.prompt, "summarize this artifact");
+        assert_eq!(request.purpose, "tool_output_summary");
+        assert_eq!(request.context_token, "turn");
         Ok(Some("host summary".into()))
     }
 }
@@ -427,15 +436,42 @@ async fn setup_serves_detection_and_forwards_model_calls_to_the_host() {
         .await
         .unwrap();
     assert_eq!(detected, "log");
-    let request: GenerateRequest = serde_json::from_value(serde_json::json!({
-        "prompt": "summarize this artifact", "contextToken": "turn", "maxOutputTokens": 100,
-        "purpose": "tool_output_summary", "system": "Summarize"
-    }))
-    .unwrap();
-    assert_eq!(
-        tinyjuice::llm::generate(request).await.unwrap(),
-        Some("host summary".into())
-    );
-    tinyjuice::llm::configure_callback(None);
+    proxy
+        .call::<()>(
+            "Install",
+            (serde_json::json!({
+                "options": {
+                    "routerEnabled": true,
+                    "ccrEnabled": true,
+                    "llmSummaryEnabled": true,
+                    "llmSummaryMode": "auto",
+                    "llmSummaryThresholdTokens": 10
+                },
+                "maxCacheEntries": 8,
+                "maxCacheBytes": 1048576,
+                "ccrTtlSecs": null,
+                "ccrDurable": false
+            }),),
+        )
+        .await
+        .unwrap();
+    let response: CompactResponse = proxy
+        .call(
+            "CompactWith",
+            (CompactRequest {
+                content: "summarize this artifact ".repeat(40),
+                tool_name: "web_fetch".into(),
+                enabled: false,
+                profile: AgentTokenjuiceCompression::Full,
+                arguments: None,
+                focus: None,
+                context_token: Some("turn".into()),
+                scope: Some("setup-summary".into()),
+            },),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.compressor, "llm_summary");
+    assert!(response.text.starts_with("host summary"));
     broker_task.abort();
 }
