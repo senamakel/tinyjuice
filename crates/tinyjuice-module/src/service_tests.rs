@@ -159,6 +159,57 @@ async fn compression_services_keep_durable_ccr_in_their_own_storage() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn legacy_install_discovers_storage_started_after_module_setup() {
+    use crate::storage::tests::rig;
+    use tinystoragedrivers_core::{Scope, StorageBackend};
+
+    let mut rig = rig(false).await.unwrap();
+    let service = Compression::new(Some(rig.module.clone()), None, false);
+    let install = || InstallRequest {
+        options: CompressOptions {
+            min_bytes_to_compress: 64,
+            ccr_min_tokens: 16,
+            ..CompressOptions::default()
+        },
+        max_cache_entries: 1,
+        max_cache_bytes: 1,
+        ccr_ttl_secs: Some(600),
+        ccr_durable: true,
+    };
+
+    service.install(install()).await.unwrap();
+    rig.serve_storage().await.unwrap();
+    service.install(install()).await.unwrap();
+
+    let original = (0..200)
+        .map(|index| format!("INFO request completed id={index}\n"))
+        .collect::<String>();
+    let result = service
+        .compress(
+            original.clone(),
+            ContentHint {
+                explicit: Some(tinyjuice::types::ContentKind::Log),
+                ..ContentHint::default()
+            },
+        )
+        .await
+        .unwrap();
+    let token = result
+        .ccr_token
+        .expect("the late legacy storage host should retain the original");
+    let scope = rig.backend.for_scope(&Scope::local()).unwrap();
+    let key = format!("{}{}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0], token);
+    assert!(
+        scope.blobs().get(&key).await.unwrap().is_some(),
+        "the module's later Install must connect to the now-live legacy host"
+    );
+    assert_eq!(
+        service.retrieve(token, None).await.unwrap().as_deref(),
+        Some(original.as_str())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compression_services_keep_savings_in_their_own_documents() {
     use crate::storage::tests::rig;
     use tinyjuice_bus::savings::RecordSavingsRequest;
