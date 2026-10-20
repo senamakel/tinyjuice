@@ -15,17 +15,15 @@
 //! * a timeout is not a failure: the model was slow on a large input, not
 //!   broken, so it does not count toward the scope's breaker.
 
-use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::Arc;
 
 use tokio::sync::watch;
 
 use super::{
-    CacheKey, PURPOSE, SYSTEM_PROMPT, SummaryInput, UnavailableReason, breaker_tripped, cache_key,
-    cached_summary, effective_max_input_tokens, estimate_tokens, framed_prompt, record_failure,
-    record_success, remember_summary,
+    CacheKey, OnDemandCallResult, PURPOSE, SYSTEM_PROMPT, SummaryInput, SummaryState,
+    UnavailableReason, cache_key, effective_max_input_tokens, estimate_tokens, framed_prompt,
 };
-use crate::llm::GenerateRequest;
+use crate::llm::{GenerateCallback, GenerateRequest};
 use crate::types::CompressOptions;
 
 /// What an on-demand summary request produced.
@@ -48,12 +46,7 @@ const CHARS_PER_TOKEN: usize = 4;
 const HIT_LINE_CHARS: usize = 300;
 
 /// How one model call ended. `Err(None)` is a host that declined.
-type CallResult = Result<String, Option<UnavailableReason>>;
-
-/// Calls still running, by cache key. A repeat request subscribes instead of
-/// paying for a second call.
-static IN_FLIGHT: LazyLock<Mutex<HashMap<CacheKey, watch::Receiver<Option<CallResult>>>>> =
-    LazyLock::new(Default::default);
+type CallResult = OnDemandCallResult;
 
 /// Have the host's model summarize `input.content` because the agent asked.
 ///
@@ -63,6 +56,25 @@ static IN_FLIGHT: LazyLock<Mutex<HashMap<CacheKey, watch::Receiver<Option<CallRe
 pub async fn summarize_on_demand(
     input: SummaryInput<'_>,
     opts: &CompressOptions,
+) -> OnDemandSummary {
+    if !crate::llm::has_callback() {
+        return OnDemandSummary::Fallback(None);
+    }
+    summarize_on_demand_with_context(
+        SummaryState::global(),
+        input,
+        opts,
+        crate::llm::global_generate_callback(),
+    )
+    .await
+}
+
+/// On-demand summary using one instance's reusable state and host callback.
+pub async fn summarize_on_demand_with_context(
+    state: &SummaryState,
+    input: SummaryInput<'_>,
+    opts: &CompressOptions,
+    generate: Arc<GenerateCallback>,
 ) -> OnDemandSummary {
     let tool = input.tool_name;
     let raw = input.content;
@@ -74,11 +86,6 @@ pub async fn summarize_on_demand(
         log::debug!("[tinyjuice::summarize] on-demand: no context token tool={tool}");
         return OnDemandSummary::Fallback(None);
     };
-    if !crate::llm::has_callback() {
-        log::debug!("[tinyjuice::summarize] on-demand: no host model tool={tool}");
-        return OnDemandSummary::Fallback(None);
-    }
-
     let focus = input.focus.map(str::trim).filter(|f| !f.is_empty());
     let scope = input
         .scope
@@ -90,19 +97,19 @@ pub async fn summarize_on_demand(
     let tokens = estimate_tokens(raw);
     let sampled = tokens > cap_tokens;
 
-    if let Some(text) = cached_summary(&key) {
+    if let Some(text) = state.cached_summary(&key) {
         log::info!(
             "[tinyjuice::summarize] on-demand: reusing a kept summary tool={tool} bytes={}",
             raw.len()
         );
         return OnDemandSummary::Written { text, sampled };
     }
-    if breaker_tripped(&scope) {
+    if state.breaker_tripped(&scope) {
         log::warn!("[tinyjuice::summarize] on-demand: breaker open tool={tool}");
         return OnDemandSummary::Fallback(Some(UnavailableReason::Disabled));
     }
 
-    let mut receiver = join_or_start(key, || {
+    let receiver = join_or_start(state, key, generate, || {
         let (body, prompt) = if sampled {
             let sample = sample_for_budget(raw, focus, cap_tokens.saturating_mul(CHARS_PER_TOKEN));
             let prompt = framed_prompt(tool, focus, &sample, |tag| {
@@ -174,10 +181,16 @@ struct GenerateCall {
 /// Subscribe to the call already running for `key`, or start one built by
 /// `prepare`.
 fn join_or_start(
+    state: &SummaryState,
     key: CacheKey,
+    generate: Arc<GenerateCallback>,
     prepare: impl FnOnce() -> GenerateCall,
 ) -> watch::Receiver<Option<CallResult>> {
-    let mut in_flight = IN_FLIGHT.lock().unwrap_or_else(|p| p.into_inner());
+    let mut in_flight = state
+        .inner
+        .in_flight
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     if let Some(running) = in_flight.get(&key) {
         log::info!("[tinyjuice::summarize] on-demand: joining the call already running");
         return running.clone();
@@ -186,13 +199,16 @@ fn join_or_start(
     in_flight.insert(key, receiver.clone());
     drop(in_flight);
     let call = prepare();
+    let state = state.clone();
     tokio::spawn(async move {
-        let result = run_call(call).await;
+        let result = run_call(call, &state, generate).await;
         if let Ok(text) = &result {
-            remember_summary(key, text.clone());
+            state.remember_summary(key, text.clone());
         }
         let _ = sender.send(Some(result));
-        IN_FLIGHT
+        state
+            .inner
+            .in_flight
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .remove(&key);
@@ -202,7 +218,11 @@ fn join_or_start(
 
 /// Make the model call and judge its reply, recording failures (never a
 /// timeout, which happens to the waiter, not here) against the scope.
-async fn run_call(call: GenerateCall) -> CallResult {
+async fn run_call(
+    call: GenerateCall,
+    state: &SummaryState,
+    generate: Arc<GenerateCallback>,
+) -> CallResult {
     let GenerateCall {
         request,
         sent_bytes,
@@ -210,7 +230,7 @@ async fn run_call(call: GenerateCall) -> CallResult {
         tool,
     } = call;
     let started = std::time::Instant::now();
-    let summary = match crate::llm::generate(request).await {
+    let summary = match generate(request).await {
         Ok(None) => {
             log::debug!("[tinyjuice::summarize] on-demand: host declined tool={tool}");
             return Err(None);
@@ -220,7 +240,7 @@ async fn run_call(call: GenerateCall) -> CallResult {
             log::warn!(
                 "[tinyjuice::summarize] on-demand: host call failed tool={tool} error={error}"
             );
-            record_failure(&scope);
+            state.record_failure(&scope);
             return Err(Some(UnavailableReason::Failed));
         }
     };
@@ -229,10 +249,10 @@ async fn run_call(call: GenerateCall) -> CallResult {
             "[tinyjuice::summarize] on-demand: unusable summary tool={tool} summary_bytes={} sent_bytes={sent_bytes}",
             summary.len()
         );
-        record_failure(&scope);
+        state.record_failure(&scope);
         return Err(Some(UnavailableReason::Failed));
     }
-    record_success(&scope);
+    state.record_success(&scope);
     log::info!(
         "[tinyjuice::summarize] on-demand: summarized tool={tool} sent_bytes={sent_bytes} \
          to_bytes={} elapsed_ms={}",
