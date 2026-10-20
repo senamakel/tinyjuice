@@ -104,16 +104,16 @@ async fn compression_services_keep_durable_ccr_in_their_own_storage() {
     let token = result.ccr_token.expect("durable storage should retain the original");
     let key = format!("{}{}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0], token);
 
-    let first_blobs = first
+    let first_storage = first
         .backend
         .for_scope(&Scope::local())
-        .unwrap()
-        .blobs();
-    let second_blobs = second
+        .unwrap();
+    let second_storage = second
         .backend
         .for_scope(&Scope::local())
-        .unwrap()
-        .blobs();
+        .unwrap();
+    let first_blobs = first_storage.blobs();
+    let second_blobs = second_storage.blobs();
     assert_eq!(
         first_blobs.get(&key).await.unwrap().map(|blob| blob.bytes),
         Some(content.into_bytes()),
