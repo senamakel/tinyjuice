@@ -10,11 +10,130 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tinybus::Connection;
-use tinyjuice::cache::store::{CcrPutResult, CcrStore, RangeUnit};
+use tinyjuice::cache::store::{CcrPutResult, CcrStore, MemoryCcrStore, RangeUnit};
 use tinyjuice_drivers::BlobCcrStore;
 use tinystoragedrivers_core::{BlobStore, DocumentStore, StorageBackend};
 
+/// The owner-scoped host ports bound for one Compression service instance.
+#[derive(Clone)]
+pub(crate) struct StorageBinding {
+    pub(crate) blobs: Arc<dyn BlobStore>,
+    pub(crate) documents: Arc<dyn DocumentStore>,
+}
+
+impl StorageBinding {
+    fn from_scoped(scoped: &tinystoragedrivers_core::ScopedStorage) -> Self {
+        Self {
+            blobs: Arc::clone(scoped.blobs()),
+            documents: Arc::clone(scoped.documents()),
+        }
+    }
+}
+
+/// Resolve the host storage supplied for one module setup.
+///
+/// A descriptor selects a host-authorized route; peer identity and the live
+/// registry grant authorize access. Failure is returned to setup and never
+/// falls back to the compatibility endpoint. `None` alone uses the legacy
+/// route, which remains best-effort for older hosts.
+pub(crate) async fn bind(
+    connection: Connection,
+    descriptor: Option<tinystoragedrivers_busproxy::governed::StorageDescriptor>,
+) -> tinybus::Result<Option<StorageBinding>> {
+    match descriptor {
+        Some(descriptor) => {
+            let transport =
+                tinystoragedrivers_busproxy::BusTransport::connect_bound(connection, descriptor)
+                    .await
+                    .map_err(|_| {
+                        tinybus::Error::failed("configured storage descriptor unavailable")
+                    })?;
+            let bus = tinystoragedrivers_client::BusStorage::connect(
+                Arc::new(transport),
+                tinystoragedrivers_busproxy::module_scope_label(),
+            )
+            .await
+            .map_err(|_| tinybus::Error::failed("configured storage descriptor unavailable"))?;
+            let scoped = bus
+                .for_scope(&tinystoragedrivers_busproxy::module_scope_label())
+                .map_err(|_| tinybus::Error::failed("configured storage descriptor unavailable"))?;
+            Ok(Some(StorageBinding::from_scoped(&scoped)))
+        }
+        None => Ok(scoped(connection)
+            .await
+            .as_ref()
+            .map(StorageBinding::from_scoped)),
+    }
+}
+
+/// The bounded memory cache and optional durable blobs for one profile.
+pub(crate) struct InstanceCcrStore {
+    memory: Arc<MemoryCcrStore>,
+    durable: std::sync::RwLock<Option<Arc<dyn CcrStore>>>,
+}
+
+impl InstanceCcrStore {
+    pub(crate) fn new() -> Self {
+        Self {
+            memory: Arc::new(MemoryCcrStore::default()),
+            durable: std::sync::RwLock::new(None),
+        }
+    }
+
+    pub(crate) fn configure(&self, max_entries: usize, max_bytes: usize, ttl: Option<Duration>) {
+        self.memory.configure(max_entries, max_bytes, ttl);
+    }
+
+    pub(crate) fn set_durable(&self, store: Option<Arc<dyn CcrStore>>) {
+        *self.durable.write().unwrap_or_else(|p| p.into_inner()) = store;
+    }
+
+    pub(crate) fn stats(&self) -> (usize, usize) {
+        self.memory.stats()
+    }
+}
+
+impl CcrStore for InstanceCcrStore {
+    fn put(&self, content: &str) -> CcrPutResult {
+        let memory = self.memory.put(content);
+        let durable = self
+            .durable
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let durable_retained = durable.is_some_and(|store| {
+            let result = store.put(content);
+            result.retained() && result.token() == memory.token()
+        });
+        CcrPutResult::new(
+            memory.token().to_owned(),
+            memory.retained() || durable_retained,
+        )
+    }
+
+    fn get(&self, token: &str) -> Option<String> {
+        self.memory.get(token).or_else(|| {
+            self.durable
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
+                .and_then(|store| store.get(token))
+        })
+    }
+
+    fn get_range(&self, token: &str, start: usize, end: usize, unit: RangeUnit) -> Option<String> {
+        self.memory.get_range(token, start, end, unit).or_else(|| {
+            self.durable
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
+                .and_then(|store| store.get_range(token, start, end, unit))
+        })
+    }
+}
+
 /// The host's blob port, connected through `connection`, when it serves one.
+#[cfg(test)]
 async fn blobs(connection: Connection) -> Option<Arc<dyn BlobStore>> {
     scoped(connection)
         .await
@@ -48,6 +167,7 @@ async fn scoped(connection: Connection) -> Option<tinystoragedrivers_core::Scope
 
 /// The CCR durable tier on the host's blob port, or `None` when the host
 /// serves no storage (or cannot expire blobs for `ttl`).
+#[cfg(test)]
 pub(crate) async fn durable_tier(
     connection: Connection,
     ttl: Option<Duration>,
@@ -55,19 +175,42 @@ pub(crate) async fn durable_tier(
     tier_on(blobs(connection).await?, ttl).await
 }
 
-/// The CCR durable tier on `blobs`, or `None` when the store cannot be built
-/// (for example a handle that cannot expire blobs for `ttl`).
-async fn tier_on(blobs: Arc<dyn BlobStore>, ttl: Option<Duration>) -> Option<Arc<dyn CcrStore>> {
-    // The store builds a blocking bridge, which must not run on an async worker.
+/// Build the durable tier on a descriptor-bound blob port.
+pub(crate) async fn durable_tier_on(
+    blobs: Arc<dyn BlobStore>,
+    ttl: Option<Duration>,
+) -> Result<Arc<dyn CcrStore>, String> {
     let opened = tokio::task::spawn_blocking(move || BlobCcrStore::new(blobs, ttl))
         .await
-        .map_err(|error| error.to_string())
-        .and_then(|opened| opened.map_err(|error| error.to_string()));
-    match opened {
-        Ok(store) => {
-            log::debug!("[tinyjuice_module] ccr durable tier on host blobs ttl={ttl:?}");
-            Some(Arc::new(OffWorker(store)))
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    log::debug!("[tinyjuice_module] ccr durable tier on bound host blobs ttl={ttl:?}");
+    Ok(Arc::new(OffWorker(opened)))
+}
+
+/// Resolve the compatibility endpoint again for an explicit legacy Install.
+/// This lets a host that starts or restarts after module setup provide its
+/// current storage ports without retaining a stale endpoint binding.
+pub(crate) async fn legacy_durable_tier(
+    connection: Connection,
+    ttl: Option<Duration>,
+) -> Option<Arc<dyn CcrStore>> {
+    let binding = bind(connection, None).await.ok().flatten()?;
+    match durable_tier_on(binding.blobs, ttl).await {
+        Ok(store) => Some(store),
+        Err(error) => {
+            log::warn!("[tinyjuice_module] ccr store on host storage unavailable: {error}");
+            None
         }
+    }
+}
+
+/// The CCR durable tier on `blobs`, or `None` when the store cannot be built
+/// (for example a handle that cannot expire blobs for `ttl`).
+#[cfg(test)]
+async fn tier_on(blobs: Arc<dyn BlobStore>, ttl: Option<Duration>) -> Option<Arc<dyn CcrStore>> {
+    match durable_tier_on(blobs, ttl).await {
+        Ok(store) => Some(store),
         Err(error) => {
             log::warn!("[tinyjuice_module] ccr store on host storage unavailable: {error}");
             None

@@ -1,38 +1,137 @@
 //! End-to-end proof that the built TinyJuice cdylib is admitted and serves
 //! compression and CCR retrieval through a real TinyBus broker.
 
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
-use tinybus::Connection;
-use tinybus::module::ModuleState;
-use tinybus::test_support::{admit_module, start_bus, wait_until_serving};
+use tinybus::{
+    Connection,
+    module::{ModuleHost, ModuleState},
+    test_support::{admit_module, wait_until_serving},
+    transport::memory::MemoryBus,
+};
 use tinyjuice::types::{AgentTokenjuiceCompression, CompressedOutput, ContentHint, ContentKind};
 use tinyjuice_bus::wire::CompactResponse;
 use tinyjuice_module::{BUS_NAME, OBJECT_PATH};
+use tinystoragedrivers_core::{
+    MemoryStorage, Scope, StorageBackend,
+    schema::delivery::MigrationDeliveryClient,
+    schema::{MigrateOptions, Registry, Schema, TransformKind},
+};
+use tinystoragedrivers_tinybus::migration::{
+    EXCHANGE_MEMBER, GET_SCHEMA_MEMBER, MIGRATION_INTERFACE, MIGRATION_OBJECT_PATH,
+    MigrationModuleClient,
+};
 
 const EXPECTED_METHODS: &[&str] = tinyjuice_bus::METHODS;
+
+#[path = "support/juice_storage.rs"]
+mod juice_storage;
+#[path = "support/mod.rs"]
+mod support;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires TINYJUICE_TEST_MODULE to point at the built cdylib"]
 async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
-    let (modules, client, broker_task) = start_bus().await.expect("memory bus should start");
+    let support::TrustedBus {
+        bus,
+        modules,
+        client,
+        controller,
+        broker_task,
+    } = support::start_trusted_bus()
+        .await
+        .expect("restricted memory broker should start");
     let loaded = admit_module(&modules, "TINYJUICE_TEST_MODULE", "tinyjuice-module")
         .expect("module should load");
     assert_eq!(loaded.name, "tinyjuice-module");
     assert_eq!(loaded.manifest.bus_name.as_str(), BUS_NAME);
     assert_eq!(loaded.manifest.object_path.as_str(), OBJECT_PATH);
-    let methods: Vec<&str> = loaded
+    let provided: Vec<&str> = loaded
         .manifest
         .provides
         .iter()
-        .flat_map(|interface| interface.methods.iter())
+        .map(|interface| interface.version.interface.as_str())
+        .collect();
+    assert_eq!(
+        provided,
+        ["ai.tinyhumans.tinyjuice.Compression", MIGRATION_INTERFACE]
+    );
+    let methods: Vec<&str> = loaded
+        .manifest
+        .provides
+        .first()
+        .expect("the primary interface should be advertised")
+        .methods
+        .iter()
         .map(tinybus::MemberName::as_str)
         .collect();
     assert_eq!(methods, EXPECTED_METHODS);
+    let migration = loaded
+        .manifest
+        .provides
+        .get(1)
+        .expect("the migration interface should be advertised second");
+    assert!(
+        migration.methods.is_empty(),
+        "the current ABI manifest attaches methods only to its primary interface"
+    );
+    assert_eq!(loaded.manifest.provides.len(), 2);
 
     wait_until_serving(&client, BUS_NAME, Duration::from_secs(5))
         .await
         .expect("module should become ready");
+    let module_peer = client
+        .name_owner(BUS_NAME)
+        .await
+        .expect("name lookup should succeed")
+        .expect("ready module should own its name");
+    let migration = migration_client_is_selected_and_confidential(&controller, &bus, &module_peer)
+        .await
+        .expect("selected controller should discover the schema");
+    assert_legacy_ccr_migrates_over_the_loaded_module(migration, &modules).await;
+
+    // Attach two current-only governed profiles after the same peer served
+    // GetSchema and migrated its owner CCR data.
+    let governed = juice_storage::JuiceStorage::attach(&modules, &controller)
+        .await
+        .expect("governed host storage should attach");
+    let (lease_a, descriptor_a) = governed
+        .lease("juice-profile-a", &module_peer)
+        .await
+        .expect("profile A lease should register for the admitted peer");
+    let (lease_b, descriptor_b) = governed
+        .lease("juice-profile-b", &module_peer)
+        .await
+        .expect("profile B lease should register for the admitted peer");
+    modules
+        .reinitialize(
+            &loaded.name,
+            serde_json::json!({"storage_descriptor": descriptor_a.clone()}),
+        )
+        .await
+        .expect("the module should bind profile A before replacing its service");
+    assert_eq!(
+        client.name_owner(BUS_NAME).await.unwrap(),
+        Some(module_peer.clone()),
+        "reinitialization keeps the admitted module peer stable"
+    );
+    assert_eq!(
+        MigrationModuleClient::discover(&controller, &module_peer)
+            .await
+            .unwrap()
+            .declaration()
+            .owner
+            .as_str(),
+        "juice",
+        "the same peer continues to serve its owner schema"
+    );
+
     let proxy = client
         .proxy(BUS_NAME, OBJECT_PATH, BUS_NAME)
         .expect("module proxy");
@@ -57,9 +156,9 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
                     "charsPerToken": 4.0
                 },
                 "maxCacheEntries": 8,
-                "maxCacheBytes": 1048576,
-                "ccrTtlSecs": null,
-                "ccrDurable": false
+                "maxCacheBytes": 1,
+                "ccrTtlSecs": 600,
+                "ccrDurable": true
             }),),
         )
         .await
@@ -116,6 +215,27 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         .expect("compress should succeed");
     assert!(output.applied);
     let token = output.ccr_token.expect("compression should be recoverable");
+    let scoped_a = governed
+        .backend
+        .for_scope(&Scope::new("juice-profile-a").unwrap())
+        .unwrap();
+    let token_key = format!("{}{token}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]);
+    assert_eq!(
+        scoped_a
+            .blobs()
+            .get(&token_key)
+            .await
+            .unwrap()
+            .unwrap()
+            .bytes,
+        content.as_bytes(),
+        "a durable-only CCR original lands in profile A's governed blob scope"
+    );
+    let cache_a: tinyjuice_bus::wire::CacheStats = proxy.call("CacheStats", ()).await.unwrap();
+    assert_eq!(
+        cache_a.entries, 0,
+        "one-byte memory cap makes this durable-only"
+    );
     let recovered: Option<String> = proxy
         .call(
             "Retrieve",
@@ -123,14 +243,421 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         )
         .await
         .expect("retrieve should succeed");
-    assert_eq!(recovered, Some(content));
+    assert_eq!(recovered, Some(content.clone()));
     typed_queries_execute_in_the_loaded_artifact(&proxy, &token).await;
 
-    assert!(matches!(modules.list()[0].state, ModuleState::Ready));
+    assert!(
+        modules
+            .list()
+            .iter()
+            .any(|module| module.name == loaded.name && matches!(module.state, ModuleState::Ready))
+    );
 
     compact_with_calls_back_to_the_host_for_a_focused_summary(&client, &proxy).await;
     savings_are_computed_and_persisted_inside_the_loaded_module(&proxy).await;
+
+    use tinyjuice_bus::names::methods;
+    proxy
+        .call::<()>(
+            methods::RECORD_SAVINGS,
+            (tinyjuice_bus::savings::RecordSavingsRequest {
+                model: "profile-a".into(),
+                compressor: "generic".into(),
+                original_tokens: 300,
+                compacted_tokens: 100,
+                input_per_mtok_usd: None,
+            },),
+        )
+        .await
+        .unwrap();
+    let stats_a: tinyjuice_bus::savings::SavingsAggregate =
+        proxy.call(methods::SAVINGS_STATS, ()).await.unwrap();
+    assert_eq!(stats_a.total.tokens_saved, 200);
+    let saved_a = governed
+        .backend
+        .for_scope(&Scope::new("juice-profile-a").unwrap())
+        .unwrap()
+        .documents()
+        .get(
+            tinyjuice_bus::storage::SAVINGS_COLLECTION,
+            tinyjuice_bus::savings::SAVINGS_DOC_ID,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved_a.doc["total"]["tokens_saved"], 200);
+
+    modules
+        .reinitialize(
+            &loaded.name,
+            serde_json::json!({"storage_descriptor": descriptor_b.clone()}),
+        )
+        .await
+        .expect("the same peer should bind profile B on reinitialization");
+    let current_migration = MigrationModuleClient::discover(&controller, &module_peer)
+        .await
+        .unwrap();
+    assert_eq!(current_migration.declaration().owner.as_str(), "juice");
+    let cache_b: tinyjuice_bus::wire::CacheStats = proxy.call("CacheStats", ()).await.unwrap();
+    assert_eq!(
+        cache_b.entries, 0,
+        "profile B starts with a fresh memory cache"
+    );
+    let from_a: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (token.clone(), Option::<serde_json::Value>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        from_a, None,
+        "profile B cannot retrieve profile A's CCR data"
+    );
+    let fresh_savings: tinyjuice_bus::savings::SavingsAggregate =
+        proxy.call(methods::SAVINGS_STATS, ()).await.unwrap();
+    assert_eq!(
+        fresh_savings.total.events, 0,
+        "profile B has its own savings ledger"
+    );
+    install_durable_profile(&proxy).await;
+
+    let content_b = (0..200)
+        .map(|index| {
+            if index == 137 {
+                format!("ERROR profile-b request failed id={index}\n")
+            } else {
+                format!("INFO profile-b request completed id={index}\n")
+            }
+        })
+        .collect::<String>();
+    let output_b: CompressedOutput = proxy
+        .call(
+            "Compress",
+            (content_b.clone(), serde_json::json!({ "explicit": "log" })),
+        )
+        .await
+        .unwrap();
+    let token_b = output_b
+        .ccr_token
+        .expect("profile B durable store should retain its original");
+    assert_ne!(
+        token, token_b,
+        "profile content has distinct recovery tokens"
+    );
+    let scope_b = governed
+        .backend
+        .for_scope(&Scope::new("juice-profile-b").unwrap())
+        .unwrap();
+    let key_b = format!("{}{token_b}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]);
+    assert_eq!(
+        scope_b.blobs().get(&key_b).await.unwrap().unwrap().bytes,
+        content_b.as_bytes()
+    );
+    let from_b: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (token_b.clone(), Option::<serde_json::Value>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(from_b.as_deref(), Some(content_b.as_str()));
+    let still_not_a: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (token.clone(), Option::<serde_json::Value>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(still_not_a, None);
+    proxy
+        .call::<()>(
+            methods::RECORD_SAVINGS,
+            (tinyjuice_bus::savings::RecordSavingsRequest {
+                model: "profile-b".into(),
+                compressor: "generic".into(),
+                original_tokens: 500,
+                compacted_tokens: 200,
+                input_per_mtok_usd: None,
+            },),
+        )
+        .await
+        .unwrap();
+    let saved_b = scope_b
+        .documents()
+        .get(
+            tinyjuice_bus::storage::SAVINGS_COLLECTION,
+            tinyjuice_bus::savings::SAVINGS_DOC_ID,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved_b.doc["total"]["tokens_saved"], 300);
+    assert_eq!(saved_a.doc["total"]["tokens_saved"], 200);
+
+    // Reinitialize onto A once more, then revoke its current-only lease. The
+    // durable-only token and persisted savings write must fail closed.
+    modules
+        .reinitialize(
+            &loaded.name,
+            serde_json::json!({"storage_descriptor": descriptor_a.clone()}),
+        )
+        .await
+        .unwrap();
+    install_durable_profile(&proxy).await;
+    let restored_a: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (token.clone(), Option::<serde_json::Value>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(restored_a.as_deref(), Some(content.as_str()));
+    assert!(
+        governed.revoke(&lease_a).await,
+        "profile A lease should revoke"
+    );
+    let revoked_a: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (token.clone(), Option::<serde_json::Value>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        revoked_a, None,
+        "revoked durable-only CCR must not fall back"
+    );
+    assert!(
+        proxy
+            .call::<()>(
+                methods::RECORD_SAVINGS,
+                (tinyjuice_bus::savings::RecordSavingsRequest {
+                    model: "revoked-a".into(),
+                    compressor: "generic".into(),
+                    original_tokens: 200,
+                    compacted_tokens: 100,
+                    input_per_mtok_usd: None,
+                },)
+            )
+            .await
+            .is_err(),
+        "revoked document writes must be reported as failed"
+    );
+
+    modules
+        .reinitialize(
+            &loaded.name,
+            serde_json::json!({"storage_descriptor": descriptor_b.clone()}),
+        )
+        .await
+        .unwrap();
+    install_durable_profile(&proxy).await;
+    let from_b_after_a_revoke: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (token_b.clone(), Option::<serde_json::Value>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(from_b_after_a_revoke.as_deref(), Some(content_b.as_str()));
+    let b_savings: tinyjuice_bus::savings::SavingsAggregate =
+        proxy.call(methods::SAVINGS_STATS, ()).await.unwrap();
+    assert_eq!(b_savings.total.tokens_saved, 300);
+
+    // A revoked descriptor cannot replace the live B service or retarget it.
+    assert!(
+        modules
+            .reinitialize(
+                &loaded.name,
+                serde_json::json!({"storage_descriptor": descriptor_a}),
+            )
+            .await
+            .is_err()
+    );
+    let live_b: Option<String> = proxy
+        .call("Retrieve", (token_b, Option::<serde_json::Value>::None))
+        .await
+        .unwrap();
+    assert_eq!(live_b.as_deref(), Some(content_b.as_str()));
+    assert!(
+        governed.revoke(&lease_b).await,
+        "profile B lease should revoke"
+    );
+    governed.shutdown().await.unwrap();
     broker_task.abort();
+}
+
+async fn install_durable_profile(proxy: &tinybus::Proxy) {
+    proxy
+        .call::<()>(
+            "Install",
+            (serde_json::json!({
+                "options": {
+                    "routerEnabled": true,
+                    "ccrEnabled": true,
+                    "searchEnabled": true,
+                    "codeEnabled": true,
+                    "htmlEnabled": true,
+                    "mlTextEnabled": false,
+                    "minBytesToCompress": 64,
+                    "minBytesToCompressLog": 32,
+                    "ccrMinTokens": 16,
+                    "lossyWithoutCcr": false,
+                    "maxInlineChars": null,
+                    "codeTargetRatio": null,
+                    "charsPerToken": 4.0
+                },
+                "maxCacheEntries": 8,
+                "maxCacheBytes": 1,
+                "ccrTtlSecs": 600,
+                "ccrDurable": true
+            }),),
+        )
+        .await
+        .expect("durable profile install should succeed");
+}
+
+async fn migration_client_is_selected_and_confidential(
+    controller: &Connection,
+    bus: &MemoryBus,
+    module_peer: &tinybus::BusName,
+) -> Result<MigrationModuleClient, Box<dyn std::error::Error>> {
+    let controller_proxy =
+        controller.proxy(BUS_NAME, MIGRATION_OBJECT_PATH, MIGRATION_INTERFACE)?;
+    assert!(
+        controller_proxy
+            .call::<serde_json::Value>(GET_SCHEMA_MEMBER, ())
+            .await
+            .is_err(),
+        "schema discovery must reject a nonconfidential call"
+    );
+
+    let outsider = Connection::connect(bus.connect().await?).await?;
+    let outsider_proxy = outsider.proxy(BUS_NAME, MIGRATION_OBJECT_PATH, MIGRATION_INTERFACE)?;
+    let malformed = outsider_proxy
+        .call_confidential::<serde_json::Value>(EXCHANGE_MEMBER, serde_json::json!("secret-marker"))
+        .await
+        .expect_err("an unselected peer must be denied before decoding");
+    assert!(
+        malformed
+            .to_string()
+            .contains("migration authority unavailable"),
+        "the selected-host check must reject the peer before payload decoding"
+    );
+    assert!(
+        !malformed.to_string().contains("secret-marker"),
+        "authorization failures must not reflect request content"
+    );
+    assert!(
+        MigrationModuleClient::discover(&outsider, module_peer)
+            .await
+            .is_err(),
+        "schema discovery must be bound to the selected controller"
+    );
+
+    let client = MigrationModuleClient::discover(controller, module_peer).await?;
+    let declaration = client.declaration();
+    assert_eq!(declaration.owner.as_str(), "juice");
+    assert_eq!(declaration.steps.len(), 1);
+    assert_eq!(declaration.steps[0].id, "ccr_prefix_v2");
+    assert_eq!(
+        declaration.steps[0].transform.operation,
+        "tinyjuice.ccr-prefix-v2"
+    );
+    assert_eq!(declaration.steps[0].transform.version, 1);
+    assert_eq!(declaration.steps[0].transform.kind, TransformKind::Blob);
+    Ok(client)
+}
+
+async fn assert_legacy_ccr_migrates_over_the_loaded_module(
+    client: MigrationModuleClient,
+    modules: &ModuleHost,
+) {
+    let now = Arc::new(AtomicU64::new(1_000));
+    let clock = Arc::clone(&now);
+    let backend = MemoryStorage::with_clock(Arc::new(move || clock.load(Ordering::SeqCst)));
+    let storage = backend.for_scope(&Scope::local()).expect("local scope");
+    let blobs = storage.blobs();
+    blobs
+        .put_expiring(
+            "tinyjuice_ccr/live",
+            b"still live".to_vec(),
+            Some("text/plain"),
+            Duration::from_millis(5_000),
+        )
+        .await
+        .expect("write the expiring legacy blob");
+    blobs
+        .put_expiring(
+            "tinyjuice_ccr/expired",
+            b"already expired".to_vec(),
+            Some("text/plain"),
+            Duration::from_millis(500),
+        )
+        .await
+        .expect("write the expired legacy blob");
+    blobs
+        .put("tinyjuice_ccr/persistent", b"no expiry".to_vec(), None)
+        .await
+        .expect("write the persistent legacy blob");
+    blobs
+        .put("other/keep", b"unrelated".to_vec(), None)
+        .await
+        .expect("write an unrelated blob");
+
+    now.store(4_000, Ordering::SeqCst);
+    let registry = Registry::compose_with_declarations(
+        std::iter::empty::<Schema>(),
+        [client.declaration().clone()],
+    )
+    .expect("compose the module's discovered declaration");
+    registry
+        .prepare(&backend)
+        .await
+        .expect("prepare the discovered schema");
+    let executor = MigrationDeliveryClient::new(Arc::new(client));
+    registry
+        .migrate_with_executor(&storage, &MigrateOptions::new(), &executor)
+        .await
+        .expect("run the module-owned blob transform");
+
+    let live = blobs
+        .get("juice/ccr/live")
+        .await
+        .expect("read migrated live blob")
+        .expect("live blob should be present");
+    assert_eq!(live.bytes, b"still live");
+    assert_eq!(live.meta.content_type.as_deref(), Some("text/plain"));
+    assert!(blobs.get("juice/ccr/expired").await.unwrap().is_none());
+    assert!(blobs.get("juice/ccr/persistent").await.unwrap().is_some());
+    assert!(blobs.get("other/keep").await.unwrap().is_some());
+    assert!(
+        blobs.get("tinyjuice_ccr/live").await.unwrap().is_none(),
+        "successful migration removes the legacy live source"
+    );
+    assert!(
+        blobs.get("tinyjuice_ccr/expired").await.unwrap().is_none(),
+        "successful migration removes the expired legacy source"
+    );
+    assert!(
+        blobs
+            .get("tinyjuice_ccr/persistent")
+            .await
+            .unwrap()
+            .is_none(),
+        "successful migration removes the persistent legacy source"
+    );
+
+    now.store(5_999, Ordering::SeqCst);
+    assert!(blobs.get("juice/ccr/live").await.unwrap().is_some());
+    now.store(6_000, Ordering::SeqCst);
+    assert!(
+        blobs.get("juice/ccr/live").await.unwrap().is_none(),
+        "migration must retain the source blob's original absolute expiry"
+    );
+    assert!(blobs.get("juice/ccr/persistent").await.unwrap().is_some());
+    assert!(matches!(modules.list()[0].state, ModuleState::Ready));
 }
 
 /// The host half of the summary stage, as a test host serves it: answers

@@ -9,9 +9,9 @@ use tinystoragedrivers_busproxy::{PerCallerEndpoint, ServedStorage, serve};
 use tinystoragedrivers_client::StorageServer;
 use tinystoragedrivers_core::{MemoryStorage, Scope, ScopedStorage};
 
-/// Serializes the tests that `install`, which reconfigures process-global cache
-/// state.
-pub(crate) static INSTALL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+#[cfg(feature = "static-link")]
+#[path = "../tests/support/juice_storage.rs"]
+mod governed_fixture;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -92,6 +92,153 @@ async fn originals_land_as_blobs_on_the_host_port() -> TestResult {
 async fn without_a_storage_host_there_is_no_durable_tier() -> TestResult {
     let rig = rig(false).await?;
     assert!(durable_tier(rig.module.clone(), None).await.is_none());
+    assert!(
+        legacy_durable_tier(rig.module.clone(), None)
+            .await
+            .is_none()
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "static-link")]
+async fn descriptor_binding_uses_the_granted_blob_and_document_ports() -> TestResult {
+    use tinybus::{
+        Connection, broker::Broker, module::ModuleHost, test_support::wait_until_serving,
+        transport::memory::MemoryTransport,
+    };
+    use tinyjuice_bus::wire::InstallRequest;
+    use tinystoragedrivers_core::StorageBackend;
+
+    let bus = MemoryBus::new();
+    let broker = Broker::new_restricted_module_control();
+    let broker_task = broker.spawn(bus.clone());
+    let (broker_transport, controller_transport) = MemoryTransport::pair();
+    broker.attach_module_controller(Arc::new(broker_transport))?;
+    let controller = Connection::connect(Box::new(controller_transport)).await?;
+    let modules = ModuleHost::new(broker);
+    let client = Connection::connect(bus.connect().await?).await?;
+    let loaded = modules
+        .attach_linked_with_config(
+            crate::linked_module().expect("static TinyJuice module manifest is valid"),
+            serde_json::json!({}),
+        )
+        .expect("the linked module should be admitted");
+    wait_until_serving(&client, crate::service::BUS_NAME, Duration::from_secs(5))
+        .await
+        .expect("the linked module should be ready");
+    let peer = client
+        .name_owner(crate::service::BUS_NAME)
+        .await?
+        .ok_or("the ready module has a peer identity")?;
+
+    let governed = governed_fixture::JuiceStorage::attach(&modules, &controller)
+        .await
+        .unwrap();
+    let (lease, descriptor) = governed.lease("profile-a", &peer).await.unwrap();
+    modules
+        .reinitialize(
+            &loaded.name,
+            serde_json::json!({"storage_descriptor": descriptor}),
+        )
+        .await?;
+    let proxy = client.proxy(
+        crate::service::BUS_NAME,
+        crate::service::OBJECT_PATH,
+        crate::service::BUS_NAME,
+    )?;
+    proxy
+        .call::<()>(
+            "Install",
+            (InstallRequest {
+                options: tinyjuice::types::CompressOptions {
+                    min_bytes_to_compress: 64,
+                    ccr_min_tokens: 16,
+                    ..Default::default()
+                },
+                max_cache_entries: 1,
+                max_cache_bytes: 1,
+                ccr_ttl_secs: Some(600),
+                ccr_durable: true,
+            },),
+        )
+        .await?;
+
+    let original = (0..200)
+        .map(|index| {
+            if index == 137 {
+                format!("ERROR request failed id={index}\n")
+            } else {
+                format!("INFO request completed id={index}\n")
+            }
+        })
+        .collect::<String>();
+    let output: tinyjuice::types::CompressedOutput = proxy
+        .call(
+            "Compress",
+            (
+                original.clone(),
+                tinyjuice::types::ContentHint {
+                    explicit: Some(tinyjuice::types::ContentKind::Log),
+                    ..Default::default()
+                },
+            ),
+        )
+        .await?;
+    let token = output
+        .ccr_token
+        .ok_or("the durable port retains the original")?;
+    let scoped = governed
+        .backend
+        .for_scope(&Scope::new("profile-a")?)
+        .unwrap();
+    let key = format!("{}{}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0], token);
+    assert!(scoped.blobs().get(&key).await?.is_some());
+    let ranged: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (
+                token.clone(),
+                Some(tinyjuice_bus::wire::RetrieveRange {
+                    start: 1,
+                    end: 2,
+                    unit: tinyjuice_bus::wire::RangeUnit::Lines,
+                }),
+            ),
+        )
+        .await?;
+    assert_eq!(ranged.as_deref(), Some("INFO request completed id=1"));
+    assert!(governed.revoke(&lease).await);
+    let retrieved: Option<String> = proxy
+        .call("Retrieve", (token, Option::<serde_json::Value>::None))
+        .await?;
+    assert_eq!(retrieved, None, "revoked durable reads fail closed");
+
+    governed.shutdown().await?;
+    broker_task.abort();
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unavailable_descriptor_does_not_fall_back_to_a_live_legacy_storage_endpoint() -> TestResult
+{
+    let rig = rig(true).await?;
+    let descriptor: tinystoragedrivers_busproxy::governed::StorageDescriptor =
+        serde_json::from_value(serde_json::json!({
+            "service_peer": ":1.999",
+            "registration_id": 7,
+            "object_root": "/org/tinystoragedrivers/Storage/Leases/7"
+        }))?;
+    assert!(
+        tinystoragedrivers_busproxy::connect_storage(rig.module.clone())
+            .await
+            .is_ok(),
+        "the compatibility endpoint is available in this fixture"
+    );
+    assert!(
+        bind(rig.module.clone(), Some(descriptor)).await.is_err(),
+        "a missing descriptor owner must fail instead of using the compatibility endpoint"
+    );
     Ok(())
 }
 
@@ -128,16 +275,37 @@ fn install_request(durable: bool) -> tinyjuice_bus::wire::InstallRequest {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResult {
     use crate::service::Compression;
-    let _install = INSTALL.lock().await;
     let rig = rig(true).await?;
-    let service = Compression {
-        connection: Some(rig.module.clone()),
-    };
+    let storage = crate::storage::bind(rig.module.clone(), None)
+        .await?
+        .ok_or("host storage")?;
+    let service = Compression::new(Some(rig.module.clone()), Some(storage), false);
     let host_blobs = Arc::clone(rig.backend.for_scope(&Scope::local())?.blobs());
 
-    service.install(install_request(true)).await?;
-    let content = "install wired durable tier fixture original";
-    let token = tinyjuice::cache::offload(content);
+    let mut install = install_request(true);
+    install.options.min_bytes_to_compress = 32;
+    install.options.ccr_min_tokens = 1;
+    install.max_cache_bytes = 1;
+    service.install(install).await?;
+    let content = (0..200)
+        .map(|index| {
+            if index == 137 {
+                format!("ERROR request failed id={index}\n")
+            } else {
+                format!("INFO request completed id={index}\n")
+            }
+        })
+        .collect::<String>();
+    let output = service
+        .compress(
+            content.clone(),
+            tinyjuice::types::ContentHint {
+                explicit: Some(tinyjuice::types::ContentKind::Log),
+                ..Default::default()
+            },
+        )
+        .await?;
+    let token = output.ccr_token.ok_or("offload was not retained")?;
     let key = format!("{}{token}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]);
     assert!(
         host_blobs.get(&key).await?.is_some(),
@@ -145,10 +313,37 @@ async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResu
     );
 
     // Switched off: new originals stay in memory only.
-    service.install(install_request(false)).await?;
-    let memory_only = "install cleared durable tier fixture original";
-    let token = tinyjuice::cache::offload(memory_only);
+    let mut disable = install_request(false);
+    disable.options.min_bytes_to_compress = 32;
+    disable.options.ccr_min_tokens = 1;
+    service.install(disable).await?;
+    let memory_only = (0..200)
+        .map(|index| {
+            if index == 137 {
+                format!("ERROR request failed after reset id={index}\n")
+            } else {
+                format!("INFO request completed after reset id={index}\n")
+            }
+        })
+        .collect::<String>();
+    let output = service
+        .compress(
+            memory_only,
+            tinyjuice::types::ContentHint {
+                explicit: Some(tinyjuice::types::ContentKind::Log),
+                ..Default::default()
+            },
+        )
+        .await?;
+    assert!(output.applied);
+    let token = output
+        .ccr_token
+        .ok_or("memory cache should retain the original")?;
     let key = format!("{}{token}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]);
+    assert!(
+        host_blobs.get(&key).await?.is_none(),
+        "nothing written to the durable tier"
+    );
     assert!(host_blobs.get(&key).await?.is_none(), "nothing written");
     Ok(())
 }

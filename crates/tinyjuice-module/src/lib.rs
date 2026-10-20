@@ -4,6 +4,7 @@
 //! crate is the separately shipped native module that keeps the compression
 //! engine and its dependency tree out of an embedding host.
 
+mod migration;
 mod savings_store;
 mod service;
 mod storage;

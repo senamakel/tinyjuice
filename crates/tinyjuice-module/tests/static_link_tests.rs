@@ -2,19 +2,35 @@
 //! dynamic one, without a library file or exported C symbols.
 #![cfg(feature = "static-link")]
 
-use tinybus::module::{ModuleHost, ModuleState};
-use tinybus::test_support::{start_bus, wait_until_serving};
+use tinybus::test_support::wait_until_serving;
+use tinybus::{Connection, module::ModuleState};
 use tinyjuice_module::{BUS_NAME, linked_module};
+use tinystoragedrivers_tinybus::migration::{MIGRATION_INTERFACE, MigrationModuleClient};
+
+#[path = "support/mod.rs"]
+mod support;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn linked_module_is_admitted_and_serves_its_bus_name() {
-    let (host, client, broker_task): (ModuleHost, _, _) =
-        start_bus().await.expect("memory bus should start");
+    let fixture = support::start_trusted_bus()
+        .await
+        .expect("restricted memory broker should start");
     let module = linked_module().expect("generated manifest is valid");
-    let info = host
+    let info = fixture
+        .modules
         .attach_linked_with_config(module, serde_json::json!({}))
         .expect("linked module should be admitted");
     assert_eq!(info.manifest.bus_name.as_str(), BUS_NAME);
+    let provided: Vec<&str> = info
+        .manifest
+        .provides
+        .iter()
+        .map(|interface| interface.version.interface.as_str())
+        .collect();
+    assert_eq!(
+        provided,
+        ["ai.tinyhumans.tinyjuice.Compression", MIGRATION_INTERFACE]
+    );
     assert!(matches!(
         info.state,
         ModuleState::Resolved
@@ -25,13 +41,40 @@ async fn linked_module_is_admitted_and_serves_its_bus_name() {
     let methods: Vec<&str> = info
         .manifest
         .provides
+        .first()
+        .expect("the primary interface should be advertised")
+        .methods
         .iter()
-        .flat_map(|interface| interface.methods.iter())
         .map(tinybus::MemberName::as_str)
         .collect();
     assert_eq!(methods, tinyjuice_bus::METHODS);
-    wait_until_serving(&client, BUS_NAME, std::time::Duration::from_secs(5))
+    let migration = info
+        .manifest
+        .provides
+        .get(1)
+        .expect("the migration interface should be advertised second");
+    assert!(
+        migration.methods.is_empty(),
+        "the current ABI manifest attaches methods only to its primary interface"
+    );
+    assert_eq!(info.manifest.provides.len(), 2);
+    wait_until_serving(&fixture.client, BUS_NAME, std::time::Duration::from_secs(5))
         .await
         .expect("linked module should become ready");
-    broker_task.abort();
+    let peer = BUS_NAME.parse().expect("module bus name");
+    let schema = MigrationModuleClient::discover(&fixture.controller, &peer)
+        .await
+        .expect("selected controller should discover the linked schema");
+    assert_eq!(schema.declaration().owner.as_str(), "juice");
+
+    let outsider = Connection::connect(fixture.bus.connect().await.expect("outsider transport"))
+        .await
+        .expect("outsider should connect");
+    assert!(
+        MigrationModuleClient::discover(&outsider, &peer)
+            .await
+            .is_err(),
+        "an unselected controller must not discover the schema"
+    );
+    fixture.broker_task.abort();
 }

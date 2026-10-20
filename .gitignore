@@ -1,4 +1,5 @@
 /target/
+/tests/storage-needs-consumer/target/
 **/*.rs.bk
 interface/dist/
 interface/node_modules/

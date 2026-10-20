@@ -1,10 +1,45 @@
 use super::*;
 use tinyjuice::types::CompressOptions;
 
+#[test]
+fn setup_config_accepts_legacy_empty_forms_and_a_typed_storage_descriptor() {
+    assert!(
+        serde_json::from_value::<ModuleSetupConfig>(serde_json::Value::Null)
+            .unwrap()
+            .storage_descriptor()
+            .is_none()
+    );
+    assert!(
+        serde_json::from_value::<ModuleSetupConfig>(serde_json::json!({}))
+            .unwrap()
+            .storage_descriptor()
+            .is_none()
+    );
+    let configured = serde_json::from_value::<ModuleSetupConfig>(serde_json::json!({
+        "storage_descriptor": {
+            "service_peer": ":1.23",
+            "registration_id": 4,
+            "object_root": "/org/tinystoragedrivers/Storage/Leases/4"
+        }
+    }))
+    .unwrap()
+    .storage_descriptor()
+    .unwrap();
+    assert_eq!(configured.service_peer(), ":1.23");
+    assert_eq!(
+        configured.object_root(),
+        "/org/tinystoragedrivers/Storage/Leases/4"
+    );
+    assert!(
+        serde_json::from_value::<ModuleSetupConfig>(serde_json::json!({
+            "storage_descriptor": { "unknown": true }
+        }))
+        .is_err()
+    );
+}
+
 #[tokio::test]
 async fn service_compresses_and_retrieves_a_large_log() {
-    // `install` reconfigures process-global cache state.
-    let _install = crate::storage::tests::INSTALL.lock().await;
     let service = Compression::default();
     service
         .install(InstallRequest {
@@ -53,11 +88,217 @@ async fn service_compresses_and_retrieves_a_large_log() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn compression_services_keep_durable_ccr_in_their_own_storage() {
+    use crate::storage::tests::rig;
+    use tinystoragedrivers_core::{Scope, StorageBackend};
+
+    let first = rig(true).await.unwrap();
+    let second = rig(true).await.unwrap();
+    let first_storage = crate::storage::bind(first.module.clone(), None)
+        .await
+        .unwrap();
+    let second_storage = crate::storage::bind(second.module.clone(), None)
+        .await
+        .unwrap();
+    let first_service = Compression::new(Some(first.module.clone()), first_storage, false);
+    let second_service = Compression::new(Some(second.module.clone()), second_storage, false);
+    let install = || InstallRequest {
+        options: CompressOptions {
+            min_bytes_to_compress: 64,
+            ccr_min_tokens: 16,
+            ..CompressOptions::default()
+        },
+        // Force this test's original to rely on its selected durable store.
+        max_cache_entries: 1,
+        max_cache_bytes: 1,
+        ccr_ttl_secs: Some(600),
+        ccr_durable: true,
+    };
+    first_service.install(install()).await.unwrap();
+    second_service.install(install()).await.unwrap();
+
+    let content = (0..200)
+        .map(|index| {
+            if index == 137 {
+                format!("ERROR request failed id={index}\n")
+            } else {
+                format!("INFO request completed id={index}\n")
+            }
+        })
+        .collect::<String>();
+    let result = first_service
+        .compress(
+            content.clone(),
+            ContentHint {
+                explicit: Some(tinyjuice::types::ContentKind::Log),
+                ..ContentHint::default()
+            },
+        )
+        .await
+        .unwrap();
+    let token = result
+        .ccr_token
+        .expect("durable storage should retain the original");
+    let key = format!("{}{}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0], token);
+
+    let first_storage = first.backend.for_scope(&Scope::local()).unwrap();
+    let second_storage = second.backend.for_scope(&Scope::local()).unwrap();
+    let first_blobs = first_storage.blobs();
+    let second_blobs = second_storage.blobs();
+    let first_has_blob = first_blobs.get(&key).await.unwrap().is_some();
+    let second_has_blob = second_blobs.get(&key).await.unwrap().is_some();
+    assert!(
+        first_has_blob,
+        "the first service must write the original to its own storage; first={first_has_blob}, second={second_has_blob}"
+    );
+    assert!(
+        !second_has_blob,
+        "a second service must not receive another instance's CCR original"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn legacy_install_discovers_storage_started_after_module_setup() {
+    use crate::storage::tests::rig;
+    use tinystoragedrivers_core::{Scope, StorageBackend};
+
+    let mut rig = rig(false).await.unwrap();
+    let service = Compression::new(Some(rig.module.clone()), None, false);
+    let install = || InstallRequest {
+        options: CompressOptions {
+            min_bytes_to_compress: 64,
+            ccr_min_tokens: 16,
+            ..CompressOptions::default()
+        },
+        max_cache_entries: 1,
+        max_cache_bytes: 1,
+        ccr_ttl_secs: Some(600),
+        ccr_durable: true,
+    };
+
+    service.install(install()).await.unwrap();
+    rig.serve_storage().await.unwrap();
+    service.install(install()).await.unwrap();
+
+    let original = (0..200)
+        .map(|index| {
+            if index == 137 {
+                format!("ERROR request failed id={index}\n")
+            } else {
+                format!("INFO request completed id={index}\n")
+            }
+        })
+        .collect::<String>();
+    let result = service
+        .compress(
+            original.clone(),
+            ContentHint {
+                explicit: Some(tinyjuice::types::ContentKind::Log),
+                ..ContentHint::default()
+            },
+        )
+        .await
+        .unwrap();
+    let token = result
+        .ccr_token
+        .expect("the late legacy storage host should retain the original");
+    let scope = rig.backend.for_scope(&Scope::local()).unwrap();
+    let key = format!("{}{}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0], token);
+    assert!(
+        scope.blobs().get(&key).await.unwrap().is_some(),
+        "the module's later Install must connect to the now-live legacy host"
+    );
+    assert_eq!(
+        service.retrieve(token, None).await.unwrap().as_deref(),
+        Some(original.as_str())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn compression_services_keep_savings_in_their_own_documents() {
+    use crate::storage::tests::rig;
+    use tinyjuice_bus::savings::RecordSavingsRequest;
+    use tinystoragedrivers_core::{Scope, StorageBackend};
+
+    let first = rig(true).await.unwrap();
+    let second = rig(true).await.unwrap();
+    let first_storage = crate::storage::bind(first.module.clone(), None)
+        .await
+        .unwrap()
+        .unwrap();
+    let second_storage = crate::storage::bind(second.module.clone(), None)
+        .await
+        .unwrap()
+        .unwrap();
+    let first_service = Compression::new(Some(first.module.clone()), Some(first_storage), false);
+    let second_service = Compression::new(Some(second.module.clone()), Some(second_storage), false);
+
+    first_service
+        .record_savings(RecordSavingsRequest {
+            model: "profile-a".into(),
+            compressor: "generic".into(),
+            original_tokens: 200,
+            compacted_tokens: 100,
+            input_per_mtok_usd: None,
+        })
+        .await
+        .unwrap();
+    second_service
+        .record_savings(RecordSavingsRequest {
+            model: "profile-b".into(),
+            compressor: "generic".into(),
+            original_tokens: 500,
+            compacted_tokens: 200,
+            input_per_mtok_usd: None,
+        })
+        .await
+        .unwrap();
+
+    let first_stats = first_service.savings_stats().await.unwrap();
+    let second_stats = second_service.savings_stats().await.unwrap();
+    assert_eq!(first_stats.total.tokens_saved, 100);
+    assert_eq!(second_stats.total.tokens_saved, 300);
+    assert!(first_stats.by_model.contains_key("profile-a"));
+    assert!(!first_stats.by_model.contains_key("profile-b"));
+    assert!(second_stats.by_model.contains_key("profile-b"));
+    assert!(!second_stats.by_model.contains_key("profile-a"));
+
+    let first_doc = first
+        .backend
+        .for_scope(&Scope::local())
+        .unwrap()
+        .documents()
+        .get(
+            tinyjuice_bus::storage::SAVINGS_COLLECTION,
+            tinyjuice_bus::savings::SAVINGS_DOC_ID,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let second_doc = second
+        .backend
+        .for_scope(&Scope::local())
+        .unwrap()
+        .documents()
+        .get(
+            tinyjuice_bus::storage::SAVINGS_COLLECTION,
+            tinyjuice_bus::savings::SAVINGS_DOC_ID,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first_doc.doc["total"]["tokens_saved"], 100);
+    assert_eq!(second_doc.doc["total"]["tokens_saved"], 300);
+}
+
 #[tokio::test]
 async fn service_repl_greps_a_stored_output_and_reports_bad_input() {
     let service = Compression::default();
     use tinyjuice::cache::CcrStore;
-    let token = tinyjuice::cache::GlobalCcrStore
+    let token = service
+        .state
+        .ccr
         .put("alpha\nbeta needle\ngamma\n")
         .token()
         .to_string();
@@ -169,7 +410,9 @@ async fn service_detects_compacts_and_reads_ranges() {
         .await
         .unwrap();
     assert_eq!(compact_with.text, compact.text);
-    let token = tinyjuice::cache::GlobalCcrStore
+    let token = service
+        .state
+        .ccr
         .put("alpha\nbeta\ngamma")
         .token()
         .to_string();
@@ -202,7 +445,10 @@ async fn service_detects_compacts_and_reads_ranges() {
 async fn typed_queries_preserve_results_and_structured_errors() {
     use tinyjuice::cache::CcrStore;
     use tinyjuice_bus::wire::{QueryError, QueryRequest, QueryTarget};
-    let token = tinyjuice::cache::GlobalCcrStore
+    let service = Compression::default();
+    let token = service
+        .state
+        .ccr
         .put("alpha\nbeta needle")
         .token()
         .to_string();
@@ -212,7 +458,7 @@ async fn typed_queries_preserve_results_and_structured_errors() {
             content: "alpha\nbeta needle".into(),
         },
     ] {
-        let result = Compression::default()
+        let result = service
             .query(QueryRequest {
                 target,
                 op: serde_json::from_value(serde_json::json!({"op":"find","query":"needle"}))
@@ -247,7 +493,7 @@ async fn typed_queries_preserve_results_and_structured_errors() {
         ),
     ] {
         assert_eq!(
-            Compression::default()
+            service
                 .query(QueryRequest {
                     target,
                     op: serde_json::from_value(op).unwrap(),
@@ -260,7 +506,7 @@ async fn typed_queries_preserve_results_and_structured_errors() {
             Err(expected)
         );
     }
-    let result = Compression::default()
+    let result = service
         .query(QueryRequest {
             target: QueryTarget::Content {
                 content: "alpha".into(),
@@ -278,12 +524,10 @@ async fn typed_queries_preserve_results_and_structured_errors() {
 
 #[tokio::test]
 async fn savings_service_records_and_resets_totals() {
-    Compression::default()
-        .configure_savings("ignored".into())
-        .await
-        .unwrap();
-    Compression::default().reset_savings().await.unwrap();
-    Compression::default()
+    let service = Compression::default();
+    service.configure_savings("ignored".into()).await.unwrap();
+    service.reset_savings().await.unwrap();
+    service
         .record_savings(tinyjuice_bus::savings::RecordSavingsRequest {
             model: "test-model".into(),
             compressor: "test-compressor".into(),
@@ -293,19 +537,11 @@ async fn savings_service_records_and_resets_totals() {
         })
         .await
         .unwrap();
-    let stats = Compression::default().savings_stats().await.unwrap();
+    let stats = service.savings_stats().await.unwrap();
     assert_eq!(stats.total.tokens_saved, 60);
     assert_eq!(stats.by_model["test-model"].events, 1);
-    Compression::default().reset_savings().await.unwrap();
-    assert_eq!(
-        Compression::default()
-            .savings_stats()
-            .await
-            .unwrap()
-            .total
-            .events,
-        0
-    );
+    service.reset_savings().await.unwrap();
+    assert_eq!(service.savings_stats().await.unwrap().total.events, 0);
 }
 
 #[derive(Clone)]
@@ -314,7 +550,8 @@ struct SummaryHost;
 #[tinybus::interface(name = "ai.tinyhumans.tinyjuice.MlHost")]
 impl SummaryHost {
     async fn generate(&self, request: GenerateRequest) -> BusResult<Option<String>> {
-        assert_eq!(request.prompt, "summarize this artifact");
+        assert_eq!(request.purpose, "tool_output_summary");
+        assert_eq!(request.context_token, "turn");
         Ok(Some("host summary".into()))
     }
 }
@@ -335,7 +572,7 @@ async fn setup_serves_detection_and_forwards_model_calls_to_the_host() {
     let module = Connection::connect(bus.connect().await.unwrap())
         .await
         .unwrap();
-    setup(module).await.unwrap();
+    setup_connection_services(module).await.unwrap();
     let proxy = host.proxy(BUS_NAME, OBJECT_PATH, BUS_NAME).unwrap();
     let detected: String = proxy
         .call(
@@ -351,15 +588,42 @@ async fn setup_serves_detection_and_forwards_model_calls_to_the_host() {
         .await
         .unwrap();
     assert_eq!(detected, "log");
-    let request: GenerateRequest = serde_json::from_value(serde_json::json!({
-        "prompt": "summarize this artifact", "contextToken": "turn", "maxOutputTokens": 100,
-        "purpose": "tool_output_summary", "system": "Summarize"
-    }))
-    .unwrap();
-    assert_eq!(
-        tinyjuice::llm::generate(request).await.unwrap(),
-        Some("host summary".into())
-    );
-    tinyjuice::llm::configure_callback(None);
+    proxy
+        .call::<()>(
+            "Install",
+            (serde_json::json!({
+                "options": {
+                    "routerEnabled": true,
+                    "ccrEnabled": true,
+                    "llmSummaryEnabled": true,
+                    "llmSummaryMode": "auto",
+                    "llmSummaryThresholdTokens": 10
+                },
+                "maxCacheEntries": 8,
+                "maxCacheBytes": 1048576,
+                "ccrTtlSecs": null,
+                "ccrDurable": false
+            }),),
+        )
+        .await
+        .unwrap();
+    let response: CompactResponse = proxy
+        .call(
+            "CompactWith",
+            (CompactRequest {
+                content: "summarize this artifact ".repeat(40),
+                tool_name: "web_fetch".into(),
+                enabled: false,
+                profile: AgentTokenjuiceCompression::Full,
+                arguments: None,
+                focus: None,
+                context_token: Some("turn".into()),
+                scope: Some("setup-summary".into()),
+            },),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.compressor, "llm_summary");
+    assert!(response.text.starts_with("host summary"));
     broker_task.abort();
 }

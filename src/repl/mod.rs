@@ -30,6 +30,9 @@ mod test;
 mod test_stats;
 
 use crate::cache::store::CcrStore;
+use crate::llm::GenerateCallback;
+use crate::summarize::SummaryState;
+use std::sync::Arc;
 pub use types::{
     ExtractKind, FindMode, Heading, Hit, Link, RegexMatch, ReplError, ReplLimits, ReplOp,
     ReplOutput, ScopeUnit, SearchHit,
@@ -77,8 +80,30 @@ pub async fn run_op_with_model(
     limits: &ReplLimits,
     model: Option<&ModelSummary>,
 ) -> Result<ReplOutput, ReplError> {
+    run_op_with_model_with_context(
+        store,
+        handle,
+        op,
+        limits,
+        model,
+        SummaryState::global(),
+        crate::llm::global_generate_callback(),
+    )
+    .await
+}
+
+/// [`run_op_with_model`] using one owner's summary state and host callback.
+pub async fn run_op_with_model_with_context(
+    store: &dyn CcrStore,
+    handle: &str,
+    op: &ReplOp,
+    limits: &ReplLimits,
+    model: Option<&ModelSummary>,
+    summaries: &SummaryState,
+    generate: Arc<GenerateCallback>,
+) -> Result<ReplOutput, ReplError> {
     let text = store.get(handle).ok_or(ReplError::HandleNotFound)?;
-    run_on_text_with_model_inner(&text, op, limits, model, true).await
+    run_on_text_with_model_inner(&text, op, limits, model, true, summaries, generate).await
 }
 
 /// Inspect supplied text with the same bounded model-summary behavior as a CCR query.
@@ -89,7 +114,28 @@ pub async fn run_on_text_with_model(
     limits: &ReplLimits,
     model: Option<&ModelSummary>,
 ) -> Result<ReplOutput, ReplError> {
-    run_on_text_with_model_inner(text, op, limits, model, false).await
+    run_on_text_with_model_inner(
+        text,
+        op,
+        limits,
+        model,
+        false,
+        SummaryState::global(),
+        crate::llm::global_generate_callback(),
+    )
+    .await
+}
+
+/// [`run_on_text_with_model`] using one owner's summary state and host callback.
+pub async fn run_on_text_with_model_with_context(
+    text: &str,
+    op: &ReplOp,
+    limits: &ReplLimits,
+    model: Option<&ModelSummary>,
+    summaries: &SummaryState,
+    generate: Arc<GenerateCallback>,
+) -> Result<ReplOutput, ReplError> {
+    run_on_text_with_model_inner(text, op, limits, model, false, summaries, generate).await
 }
 
 async fn run_on_text_with_model_inner(
@@ -98,6 +144,8 @@ async fn run_on_text_with_model_inner(
     limits: &ReplLimits,
     model: Option<&ModelSummary>,
     stored: bool,
+    summaries: &SummaryState,
+    generate: Arc<GenerateCallback>,
 ) -> Result<ReplOutput, ReplError> {
     let (
         Some(model),
@@ -115,7 +163,8 @@ async fn run_on_text_with_model_inner(
         Some(spec) => scope::apply(text, spec, *unit)?.0,
         None => text,
     };
-    let outcome = crate::summarize::summarize_on_demand(
+    let outcome = crate::summarize::summarize_on_demand_with_context(
+        summaries,
         crate::summarize::SummaryInput {
             tool_name: STORED_OUTPUT_LABEL,
             content: scoped,
@@ -124,6 +173,7 @@ async fn run_on_text_with_model_inner(
             scope: model.scope.as_deref(),
         },
         &model.options,
+        generate,
     )
     .await;
     match outcome {

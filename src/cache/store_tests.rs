@@ -11,6 +11,80 @@ fn round_trips() {
 }
 
 #[test]
+fn configuring_one_memory_store_trims_only_that_stores_entries() {
+    let first = MemoryCcrStore::new(4, 1_024);
+    let second = MemoryCcrStore::new(4, 1_024);
+    let first_token = first.put("first profile original").token().to_owned();
+    let second_token = first
+        .put("second entry in first profile")
+        .token()
+        .to_owned();
+    let other_token = second.put("first profile original").token().to_owned();
+
+    first.configure(1, 1_024, None);
+
+    assert_eq!(first.get(&first_token), None);
+    assert_eq!(
+        first.get(&second_token).as_deref(),
+        Some("second entry in first profile")
+    );
+    assert_eq!(
+        second.get(&other_token).as_deref(),
+        Some("first profile original")
+    );
+}
+
+#[test]
+fn memory_store_ttl_expires_and_removes_an_entry() {
+    let store = MemoryCcrStore::new(4, 1_024).with_ttl(Some(Duration::ZERO));
+    let put = store.put("short-lived scoped original");
+
+    assert!(put.retained());
+    assert_eq!(store.get(put.token()), None);
+    assert_eq!(store.stats(), (0, 0));
+}
+
+#[test]
+fn concurrent_configure_and_put_preserve_the_final_bounds() {
+    use std::sync::{Arc, Barrier};
+
+    let store = Arc::new(MemoryCcrStore::new(64, 2 * 1024 * 1024));
+    let start = Arc::new(Barrier::new(3));
+    let put_store = Arc::clone(&store);
+    let put_start = Arc::clone(&start);
+    let putter = std::thread::spawn(move || {
+        put_start.wait();
+        for index in 0..128 {
+            put_store.put(&format!("{index}:{}", "x".repeat(32 * 1024)));
+        }
+    });
+    let configure_store = Arc::clone(&store);
+    let configure_start = Arc::clone(&start);
+    let configurator = std::thread::spawn(move || {
+        configure_start.wait();
+        for index in 0..128 {
+            let (entries, bytes) = if index % 2 == 0 {
+                (64, 2 * 1024 * 1024)
+            } else {
+                (2, 64 * 1024)
+            };
+            configure_store.configure(entries, bytes, None);
+        }
+        configure_store.configure(1, 1, None);
+    });
+
+    start.wait();
+    putter.join().unwrap();
+    configurator.join().unwrap();
+
+    let (entries, bytes) = store.stats();
+    assert!(
+        entries <= 1 && bytes <= 1,
+        "final bounds held: {entries} entries, {bytes} bytes"
+    );
+}
+
+#[test]
 fn idempotent_hash() {
     let a = offload("ccr idempotent unique payload bravo content");
     let b = offload("ccr idempotent unique payload bravo content");

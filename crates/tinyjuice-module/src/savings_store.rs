@@ -39,6 +39,7 @@ const CONNECT_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(5);
 pub(crate) struct Savings {
     ledger: SavingsLedger,
     cooldown: std::time::Duration,
+    require_storage: bool,
     state: tokio::sync::Mutex<State>,
 }
 
@@ -47,37 +48,77 @@ impl Savings {
         Self::with_cooldown(CONNECT_COOLDOWN)
     }
 
+    /// A module instance whose document port was bound from a governed lease
+    /// before the Compression service was published.
+    pub(crate) fn with_documents(docs: Arc<dyn DocumentStore>, require_storage: bool) -> Self {
+        Self {
+            ledger: SavingsLedger::new(),
+            cooldown: CONNECT_COOLDOWN,
+            require_storage,
+            state: tokio::sync::Mutex::new(State {
+                docs: Some(docs),
+                ..State::default()
+            }),
+        }
+    }
+
     pub(crate) fn with_cooldown(cooldown: std::time::Duration) -> Self {
         Self {
             ledger: SavingsLedger::new(),
             cooldown,
+            require_storage: false,
             state: tokio::sync::Mutex::new(State::default()),
         }
     }
 
-    pub(crate) async fn record(&self, connection: Option<&Connection>, req: &RecordSavingsRequest) {
+    pub(crate) async fn record(
+        &self,
+        connection: Option<&Connection>,
+        req: &RecordSavingsRequest,
+    ) -> BusResult<()> {
         let mut state = self.state.lock().await;
-        self.load(&mut state, connection).await;
+        self.load(&mut state, connection).await?;
+        let previous = self.ledger.stats();
+        let previous_dirty = state.dirty;
+        let previous_reset_early = state.reset_early;
         self.ledger.record(req);
         state.dirty |= !state.loaded;
-        self.persist(&state).await;
+        if let Err(error) = self.persist(&state).await {
+            self.ledger.replace(previous);
+            state.dirty = previous_dirty;
+            state.reset_early = previous_reset_early;
+            return Err(error);
+        }
+        Ok(())
     }
 
-    pub(crate) async fn stats(&self, connection: Option<&Connection>) -> SavingsAggregate {
+    pub(crate) async fn stats(
+        &self,
+        connection: Option<&Connection>,
+    ) -> BusResult<SavingsAggregate> {
         let mut state = self.state.lock().await;
-        self.load(&mut state, connection).await;
-        self.ledger.stats()
+        self.load(&mut state, connection).await?;
+        Ok(self.ledger.stats())
     }
 
-    pub(crate) async fn reset(&self, connection: Option<&Connection>) {
+    pub(crate) async fn reset(&self, connection: Option<&Connection>) -> BusResult<()> {
         let mut state = self.state.lock().await;
-        self.load(&mut state, connection).await;
+        self.load(&mut state, connection).await?;
+        let previous = self.ledger.stats();
+        let previous_dirty = state.dirty;
+        let previous_reset_early = state.reset_early;
         self.ledger.reset();
         if !state.loaded {
             state.dirty = true;
             state.reset_early = true;
         }
-        self.persist(&state).await;
+        if let Err(error) = self.persist(&state).await {
+            self.ledger.replace(previous);
+            state.dirty = previous_dirty;
+            state.reset_early = previous_reset_early;
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Adopt `legacy` when nothing has been recorded. Answers whether it did;
@@ -88,7 +129,7 @@ impl Savings {
         legacy: SavingsAggregate,
     ) -> BusResult<bool> {
         let mut state = self.state.lock().await;
-        self.load(&mut state, connection).await;
+        self.load(&mut state, connection).await?;
         if !state.loaded {
             return Err(tinybus::Error::failed(
                 "savings storage is not readable yet",
@@ -100,9 +141,12 @@ impl Savings {
         }
         let previous = self.ledger.stats();
         self.ledger.replace(legacy);
-        if !self.persist(&state).await {
-            self.ledger.replace(previous);
-            return Err(tinybus::Error::failed("savings could not be written"));
+        match self.persist(&state).await {
+            Ok(true) => {}
+            Ok(false) | Err(_) => {
+                self.ledger.replace(previous);
+                return Err(tinybus::Error::failed("savings could not be written"));
+            }
         }
         Ok(true)
     }
@@ -112,26 +156,29 @@ impl Savings {
     /// Changes made before the document could be read are kept: they are
     /// added to the stored totals (or replace them after an early reset) and
     /// the result is written back.
-    async fn load(&self, state: &mut State, connection: Option<&Connection>) {
+    async fn load(&self, state: &mut State, connection: Option<&Connection>) -> BusResult<()> {
         if state.loaded {
-            return;
+            return Ok(());
         }
-        let Some(connection) = connection else {
-            state.loaded = true;
-            return;
-        };
         if state.docs.is_none() {
             if state
                 .last_connect_failure
                 .is_some_and(|at| at.elapsed() < self.cooldown)
             {
-                return;
+                return self.storage_unavailable();
             }
+            let Some(connection) = connection else {
+                if self.require_storage {
+                    return Err(tinybus::Error::failed("savings storage unavailable"));
+                }
+                state.loaded = true;
+                return Ok(());
+            };
             state.docs = crate::storage::documents(connection.clone()).await;
             state.last_connect_failure = state.docs.is_none().then(std::time::Instant::now);
         }
         let Some(docs) = state.docs.as_ref() else {
-            return;
+            return self.storage_unavailable();
         };
         let stored = match docs
             .get_as::<StoredSavings>(SAVINGS_COLLECTION, SAVINGS_DOC_ID)
@@ -140,7 +187,7 @@ impl Savings {
             Ok(found) => found.map(|found| found.doc.into_aggregate()),
             Err(error) => {
                 log::warn!("[tinyjuice_module][savings] load failed, retrying later: {error}");
-                return;
+                return self.storage_unavailable();
             }
         };
         if let Some(stored) = stored.filter(|_| !state.reset_early) {
@@ -153,20 +200,21 @@ impl Savings {
             log::debug!("[tinyjuice_module][savings] reconciled early changes with storage");
             state.dirty = false;
             state.reset_early = false;
-            self.persist(state).await;
+            self.persist(state).await?;
         }
+        Ok(())
     }
 
     /// Write the ledger. `true` when it is stored, or when there is no
     /// storage to write to; `false` when a write failed.
-    async fn persist(&self, state: &State) -> bool {
+    async fn persist(&self, state: &State) -> BusResult<bool> {
         // Nothing is written until the stored document has been read, so an
         // unread older document is never overwritten blindly.
         if !state.loaded {
-            return true;
+            return self.storage_unavailable_write(false);
         }
         let Some(docs) = state.docs.as_ref() else {
-            return true;
+            return self.storage_unavailable_write(true);
         };
         let body = StoredSavings::from_aggregate(&self.ledger.stats(), now_ms());
         match docs
@@ -178,11 +226,27 @@ impl Savings {
             )
             .await
         {
-            Ok(_) => true,
+            Ok(_) => Ok(true),
             Err(error) => {
                 log::warn!("[tinyjuice_module][savings] write failed: {error}");
-                false
+                self.storage_unavailable_write(false)
             }
+        }
+    }
+
+    fn storage_unavailable(&self) -> BusResult<()> {
+        if self.require_storage {
+            Err(tinybus::Error::failed("savings storage unavailable"))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn storage_unavailable_write(&self, no_storage_to_write: bool) -> BusResult<bool> {
+        if self.require_storage {
+            Err(tinybus::Error::failed("savings storage unavailable"))
+        } else {
+            Ok(no_storage_to_write)
         }
     }
 }

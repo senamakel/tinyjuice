@@ -13,17 +13,16 @@ CONSUMER_MANIFEST = tomllib.loads(
 )
 
 
+REV = "a04e3a174fa8f28d5229a816ca6b39c72a9efd7b"
 SOURCE = (
     "git+https://github.com/tinyhumansai/tinystoragedrivers"
-    "?rev=595723e1b1cabeb3d36f0c5b6ff2e11b458e7558"
-    "#595723e1b1cabeb3d36f0c5b6ff2e11b458e7558"
+    f"?rev={REV}#{REV}"
 )
-REV = "595723e1b1cabeb3d36f0c5b6ff2e11b458e7558"
 DEPENDENCY_SOURCE = (
     "git+https://github.com/tinyhumansai/tinystoragedrivers"
     f"?rev={REV}"
 )
-PACKAGE_ID = f"{DEPENDENCY_SOURCE}#tinystoragedrivers-bus@1.8.0"
+PACKAGE_ID = f"{DEPENDENCY_SOURCE}#tinystoragedrivers-bus@1.9.0"
 
 
 def fail(message: str) -> None:
@@ -61,10 +60,10 @@ def main() -> None:
         fail("the isolated consumer must directly declare exactly one storage bus dependency")
     dependency = direct[0]
     source = dependency.get("source") or ""
-    if source not in (DEPENDENCY_SOURCE, SOURCE):
+    if source != DEPENDENCY_SOURCE:
         fail("the direct dependency does not pin the canonical source by the expected revision")
-    if dependency.get("req") != "=1.8.0":
-        fail("the direct dependency must require exactly tinystoragedrivers-bus 1.8.0")
+    if dependency.get("req") != "=1.9.0":
+        fail("the direct dependency must require exactly tinystoragedrivers-bus 1.9.0")
     if dependency.get("uses_default_features") is not False:
         fail("the direct dependency must disable default features")
     if dependency.get("features") != [] or dependency.get("optional") is not False:
@@ -77,9 +76,9 @@ def main() -> None:
     if len(matches) != 1:
         fail("Cargo metadata must resolve exactly one storage bus package")
     package = matches[0]
-    if (package.get("version") != "1.8.0" or package.get("source") != SOURCE
+    if (package.get("version") != "1.9.0" or package.get("source") != SOURCE
             or package.get("id") != PACKAGE_ID):
-        fail("the resolved storage bus package did not match the pinned v1.8.0 source SHA")
+        fail("the resolved storage bus package did not match the pinned v1.9.0 source SHA")
 
     nodes = resolve.get("nodes")
     if not isinstance(nodes, list):

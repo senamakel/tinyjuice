@@ -29,15 +29,19 @@
 //! question is never handed back for another.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use sha2::{Digest, Sha256};
+use tokio::sync::watch;
 
-use crate::llm::GenerateRequest;
+use crate::cache::store::{CcrStore, GlobalCcrStore};
+use crate::llm::{GenerateCallback, GenerateRequest};
 
 mod on_demand;
 use crate::types::{CompressOptions, LlmSummaryMode};
-pub use on_demand::{OnDemandSummary, sample_for_budget, summarize_on_demand};
+pub use on_demand::{
+    OnDemandSummary, sample_for_budget, summarize_on_demand, summarize_on_demand_with_context,
+};
 
 /// The extraction contract the summary is written against.
 pub use tinyjuice_bus::summary::SYSTEM_PROMPT;
@@ -54,6 +58,88 @@ pub const MAX_CONSECUTIVE_FAILURES: u8 = 3;
 
 /// Upper bound on the focus carried into the prompt.
 pub const FOCUS_MAX_CHARS: usize = 2_000;
+
+/// Per-owner cache and breaker state for model summaries.
+///
+/// Library convenience calls use one process-wide instance. Loadable module
+/// owners should keep a separate value in each service instance and pass it to
+/// the injected summary entry points.
+#[derive(Clone, Default)]
+pub struct SummaryState {
+    inner: Arc<SummaryStateInner>,
+}
+
+#[derive(Default)]
+struct SummaryStateInner {
+    cache: Mutex<SummaryCache>,
+    breakers: Mutex<Breakers>,
+    in_flight: Mutex<HashMap<CacheKey, watch::Receiver<Option<OnDemandCallResult>>>>,
+}
+
+pub(super) type OnDemandCallResult = Result<String, Option<UnavailableReason>>;
+
+impl SummaryState {
+    /// The shared state used by the legacy process-global convenience API.
+    pub(crate) fn global() -> &'static Self {
+        static GLOBAL: LazyLock<SummaryState> = LazyLock::new(SummaryState::default);
+        &GLOBAL
+    }
+
+    fn cached_summary(&self, key: &CacheKey) -> Option<String> {
+        self.inner.cache.lock().ok()?.entries.get(key).cloned()
+    }
+
+    fn remember_summary(&self, key: CacheKey, summary: String) {
+        let Ok(mut cache) = self.inner.cache.lock() else {
+            return;
+        };
+        if cache.entries.insert(key, summary).is_none() {
+            cache.order.push_back(key);
+        }
+        while cache.order.len() > CACHE_ENTRIES {
+            if let Some(oldest) = cache.order.pop_front() {
+                cache.entries.remove(&oldest);
+            }
+        }
+    }
+
+    fn breaker_tripped(&self, scope: &str) -> bool {
+        match self.inner.breakers.lock() {
+            Ok(breakers) => {
+                breakers.failures.get(scope).copied().unwrap_or(0) >= MAX_CONSECUTIVE_FAILURES
+            }
+            Err(_) => true,
+        }
+    }
+
+    fn record_failure(&self, scope: &str) {
+        let Ok(mut breakers) = self.inner.breakers.lock() else {
+            return;
+        };
+        if !breakers.failures.contains_key(scope) {
+            breakers.order.push_back(scope.to_string());
+        }
+        let count = breakers.failures.entry(scope.to_string()).or_insert(0);
+        *count = count.saturating_add(1);
+        if *count == MAX_CONSECUTIVE_FAILURES {
+            log::warn!(
+                "[tinyjuice::summarize] breaker tripped after {MAX_CONSECUTIVE_FAILURES} consecutive failures"
+            );
+        }
+        while breakers.order.len() > BREAKER_SCOPES {
+            if let Some(oldest) = breakers.order.pop_front() {
+                breakers.failures.remove(&oldest);
+            }
+        }
+    }
+
+    fn record_success(&self, scope: &str) {
+        if let Ok(mut breakers) = self.inner.breakers.lock() {
+            breakers.failures.remove(scope);
+            breakers.order.retain(|candidate| candidate != scope);
+        }
+    }
+}
 
 /// One tool result to consider for summarizing.
 #[derive(Debug, Clone, Copy)]
@@ -86,6 +172,25 @@ pub enum SummaryOutcome {
 
 /// Consider one tool result for an LLM summary.
 pub async fn maybe_summarize(input: SummaryInput<'_>, opts: &CompressOptions) -> SummaryOutcome {
+    maybe_summarize_with_context(
+        SummaryState::global(),
+        input,
+        opts,
+        &GlobalCcrStore,
+        crate::llm::global_generate_callback(),
+    )
+    .await
+}
+
+/// Consider one tool result using caller-owned cache, CCR storage and host
+/// generation callback.
+pub async fn maybe_summarize_with_context(
+    state: &SummaryState,
+    input: SummaryInput<'_>,
+    opts: &CompressOptions,
+    store: &dyn CcrStore,
+    generate: Arc<GenerateCallback>,
+) -> SummaryOutcome {
     let tool = input.tool_name;
     let raw = input.content;
     if !opts.llm_summary_enabled {
@@ -132,14 +237,14 @@ pub async fn maybe_summarize(input: SummaryInput<'_>, opts: &CompressOptions) ->
     let key = cache_key(scope, tool, focus, raw);
     // Checked before the breaker: a summary already written costs nothing, so a
     // broken model is no reason to withhold it.
-    if let Some(summary) = cached_summary(&key) {
+    if let Some(summary) = state.cached_summary(&key) {
         log::info!(
             "[tinyjuice::summarize] reusing the summary of an identical payload tool={tool} bytes={}",
             raw.len()
         );
-        return finish(raw, summary, opts);
+        return finish(raw, summary, opts, store);
     }
-    if breaker_tripped(scope) {
+    if state.breaker_tripped(scope) {
         log::warn!("[tinyjuice::summarize] breaker open, skipping tool={tool}");
         return SummaryOutcome::Unavailable(UnavailableReason::Disabled);
     }
@@ -150,7 +255,7 @@ pub async fn maybe_summarize(input: SummaryInput<'_>, opts: &CompressOptions) ->
         focus.map_or(0, |f| f.chars().count())
     );
     let started = std::time::Instant::now();
-    let call = crate::llm::generate(GenerateRequest {
+    let call = generate(GenerateRequest {
         context_token: context_token.to_string(),
         purpose: PURPOSE.to_string(),
         system: SYSTEM_PROMPT.to_string(),
@@ -170,7 +275,7 @@ pub async fn maybe_summarize(input: SummaryInput<'_>, opts: &CompressOptions) ->
                     "[tinyjuice::summarize] host call timed out tool={tool} limit_ms={}",
                     opts.llm_summary_timeout_ms
                 );
-                record_failure(scope);
+                state.record_failure(scope);
                 return SummaryOutcome::Unavailable(UnavailableReason::TimedOut);
             }
         }
@@ -186,7 +291,7 @@ pub async fn maybe_summarize(input: SummaryInput<'_>, opts: &CompressOptions) ->
         Ok(Some(text)) => text.trim().to_string(),
         Err(error) => {
             log::warn!("[tinyjuice::summarize] host call failed tool={tool} error={error}");
-            record_failure(scope);
+            state.record_failure(scope);
             return SummaryOutcome::Unavailable(UnavailableReason::Failed);
         }
     };
@@ -196,28 +301,37 @@ pub async fn maybe_summarize(input: SummaryInput<'_>, opts: &CompressOptions) ->
             summary.len(),
             raw.len()
         );
-        record_failure(scope);
+        state.record_failure(scope);
         return SummaryOutcome::Unavailable(UnavailableReason::Failed);
     }
-    record_success(scope);
+    state.record_success(scope);
     log::info!(
         "[tinyjuice::summarize] summarized tool={tool} from_bytes={} to_bytes={} elapsed_ms={}",
         raw.len(),
         summary.len(),
         started.elapsed().as_millis()
     );
-    remember_summary(key, summary.clone());
-    finish(raw, summary, opts)
+    state.remember_summary(key, summary.clone());
+    finish(raw, summary, opts, store)
 }
 
 /// Offload the original and attach its recovery footer, so what the summary
 /// dropped can still be read back exactly. When CCR cannot keep the original
 /// and unrecoverable loss is not allowed, the summary is discarded and the
 /// original goes on to the deterministic compressors.
-fn finish(raw: &str, summary: String, opts: &CompressOptions) -> SummaryOutcome {
+fn finish(
+    raw: &str,
+    summary: String,
+    opts: &CompressOptions,
+    store: &dyn CcrStore,
+) -> SummaryOutcome {
     let summary_bytes = summary.len();
     let (token, retained) = if opts.ccr_enabled {
-        crate::cache::offload_checked(raw)
+        let put = store.put(raw);
+        (
+            put.token().to_owned(),
+            put.retained() && put.token() == crate::cache::short_hash(raw),
+        )
     } else {
         (String::new(), false)
     };
@@ -333,10 +447,6 @@ struct SummaryCache {
     order: VecDeque<CacheKey>,
 }
 
-/// Process-wide: the same page fetched twice in a conversation should cost one
-/// model call, not two.
-static CACHE: LazyLock<Mutex<SummaryCache>> = LazyLock::new(Default::default);
-
 /// Key a summary by everything that shapes it. Fields are length-prefixed so
 /// no two different tuples hash the same byte stream.
 fn cache_key(scope: &str, tool: &str, focus: Option<&str>, raw: &str) -> CacheKey {
@@ -348,22 +458,14 @@ fn cache_key(scope: &str, tool: &str, focus: Option<&str>, raw: &str) -> CacheKe
     hasher.finalize().into()
 }
 
+#[cfg(test)]
 fn cached_summary(key: &CacheKey) -> Option<String> {
-    CACHE.lock().ok()?.entries.get(key).cloned()
+    SummaryState::global().cached_summary(key)
 }
 
+#[cfg(test)]
 fn remember_summary(key: CacheKey, summary: String) {
-    let Ok(mut cache) = CACHE.lock() else {
-        return;
-    };
-    if cache.entries.insert(key, summary).is_none() {
-        cache.order.push_back(key);
-    }
-    while cache.order.len() > CACHE_ENTRIES {
-        if let Some(oldest) = cache.order.pop_front() {
-            cache.entries.remove(&oldest);
-        }
-    }
+    SummaryState::global().remember_summary(key, summary);
 }
 
 /// Scopes whose breaker state is tracked. Oldest out first.
@@ -375,42 +477,19 @@ struct Breakers {
     order: VecDeque<String>,
 }
 
-static BREAKERS: LazyLock<Mutex<Breakers>> = LazyLock::new(Default::default);
-
+#[cfg(test)]
 fn breaker_tripped(scope: &str) -> bool {
-    match BREAKERS.lock() {
-        Ok(b) => b.failures.get(scope).copied().unwrap_or(0) >= MAX_CONSECUTIVE_FAILURES,
-        // A poisoned lock means a panic mid-summary: a good reason to stop.
-        Err(_) => true,
-    }
+    SummaryState::global().breaker_tripped(scope)
 }
 
+#[cfg(test)]
 fn record_failure(scope: &str) {
-    let Ok(mut b) = BREAKERS.lock() else {
-        return;
-    };
-    if !b.failures.contains_key(scope) {
-        b.order.push_back(scope.to_string());
-    }
-    let count = b.failures.entry(scope.to_string()).or_insert(0);
-    *count = count.saturating_add(1);
-    if *count == MAX_CONSECUTIVE_FAILURES {
-        log::warn!(
-            "[tinyjuice::summarize] breaker tripped after {MAX_CONSECUTIVE_FAILURES} consecutive failures"
-        );
-    }
-    while b.order.len() > BREAKER_SCOPES {
-        if let Some(oldest) = b.order.pop_front() {
-            b.failures.remove(&oldest);
-        }
-    }
+    SummaryState::global().record_failure(scope)
 }
 
+#[cfg(test)]
 fn record_success(scope: &str) {
-    if let Ok(mut b) = BREAKERS.lock() {
-        b.failures.remove(scope);
-        b.order.retain(|s| s != scope);
-    }
+    SummaryState::global().record_success(scope)
 }
 
 #[cfg(test)]

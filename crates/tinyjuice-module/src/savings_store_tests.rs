@@ -31,7 +31,8 @@ async fn records_land_as_a_snake_case_document_with_ms_time() -> TestResult {
     let savings = Savings::new();
     savings
         .record(Some(&rig.module), &req(2_000_000, 1_000_000))
-        .await;
+        .await
+        .unwrap();
     let body = stored(&rig).await?.ok_or("document written")?;
     assert_eq!(body["total"]["tokens_saved"], 1_000_000);
     assert_eq!(body["by_model"]["m"]["events"], 1);
@@ -45,19 +46,36 @@ async fn a_new_process_resumes_the_stored_totals() -> TestResult {
     let rig = rig(true).await?;
     Savings::new()
         .record(Some(&rig.module), &req(200, 100))
-        .await;
+        .await
+        .unwrap();
     let resumed = Savings::new();
     assert_eq!(
-        resumed.stats(Some(&rig.module)).await.total.tokens_saved,
+        resumed
+            .stats(Some(&rig.module))
+            .await
+            .unwrap()
+            .total
+            .tokens_saved,
         100
     );
-    resumed.record(Some(&rig.module), &req(200, 100)).await;
-    assert_eq!(resumed.stats(Some(&rig.module)).await.total.events, 2);
-    resumed.reset(Some(&rig.module)).await;
+    resumed
+        .record(Some(&rig.module), &req(200, 100))
+        .await
+        .unwrap();
+    assert_eq!(
+        resumed.stats(Some(&rig.module)).await.unwrap().total.events,
+        2
+    );
+    resumed.reset(Some(&rig.module)).await.unwrap();
     let body = stored(&rig).await?.ok_or("empty document kept")?;
     assert_eq!(body["total"]["events"], 0);
     assert_eq!(
-        Savings::new().stats(Some(&rig.module)).await.total.events,
+        Savings::new()
+            .stats(Some(&rig.module))
+            .await
+            .unwrap()
+            .total
+            .events,
         0
     );
     Ok(())
@@ -79,13 +97,21 @@ async fn import_adopts_a_legacy_snapshot_only_when_nothing_was_recorded() -> Tes
     let savings = Savings::new();
     assert!(savings.import(Some(&rig.module), legacy.clone()).await?);
     assert_eq!(
-        savings.stats(Some(&rig.module)).await.total.tokens_saved,
+        savings
+            .stats(Some(&rig.module))
+            .await
+            .unwrap()
+            .total
+            .tokens_saved,
         20
     );
     assert_eq!(stored(&rig).await?.ok_or("written")?["total"]["events"], 3);
     // Importing again must not double count.
     assert!(!savings.import(Some(&rig.module), legacy).await?);
-    assert_eq!(savings.stats(Some(&rig.module)).await.total.events, 3);
+    assert_eq!(
+        savings.stats(Some(&rig.module)).await.unwrap().total.events,
+        3
+    );
     Ok(())
 }
 
@@ -93,8 +119,14 @@ async fn import_adopts_a_legacy_snapshot_only_when_nothing_was_recorded() -> Tes
 async fn without_a_storage_host_totals_stay_in_memory() -> TestResult {
     let rig = rig(false).await?;
     let savings = Savings::new();
-    savings.record(Some(&rig.module), &req(200, 100)).await;
-    assert_eq!(savings.stats(Some(&rig.module)).await.total.events, 1);
+    savings
+        .record(Some(&rig.module), &req(200, 100))
+        .await
+        .unwrap();
+    assert_eq!(
+        savings.stats(Some(&rig.module)).await.unwrap().total.events,
+        1
+    );
     assert!(stored(&rig).await?.is_none());
     let legacy = SavingsAggregate::default();
     assert!(
@@ -109,19 +141,23 @@ async fn totals_recorded_before_storage_answers_are_added_to_the_stored_ones() -
     let rig = rig(true).await?;
     Savings::new()
         .record(Some(&rig.module), &req(200, 100))
-        .await;
+        .await
+        .unwrap();
     // A fresh module whose storage endpoint is not up yet.
     let mut late = crate::storage::tests::rig(false).await?;
     late.backend = rig.backend.clone();
     let savings = Savings::with_cooldown(std::time::Duration::ZERO);
-    savings.record(Some(&late.module), &req(400, 100)).await;
+    savings
+        .record(Some(&late.module), &req(400, 100))
+        .await
+        .unwrap();
     assert!(
         stored(&rig)
             .await?
             .is_some_and(|b| b["total"]["events"] == 1)
     );
     late.serve_storage().await?;
-    let merged = savings.stats(Some(&late.module)).await;
+    let merged = savings.stats(Some(&late.module)).await.unwrap();
     assert_eq!(merged.total.events, 2);
     assert_eq!(merged.total.tokens_saved, 100 + 300);
     assert_eq!(stored(&rig).await?.ok_or("written")?["total"]["events"], 2);
@@ -133,13 +169,22 @@ async fn a_reset_before_storage_answers_discards_the_stored_totals() -> TestResu
     let rig = rig(true).await?;
     Savings::new()
         .record(Some(&rig.module), &req(200, 100))
-        .await;
+        .await
+        .unwrap();
     let mut late = crate::storage::tests::rig(false).await?;
     late.backend = rig.backend.clone();
     let savings = Savings::with_cooldown(std::time::Duration::ZERO);
-    savings.reset(Some(&late.module)).await;
+    savings.reset(Some(&late.module)).await.unwrap();
     late.serve_storage().await?;
-    assert_eq!(savings.stats(Some(&late.module)).await.total.events, 0);
+    assert_eq!(
+        savings
+            .stats(Some(&late.module))
+            .await
+            .unwrap()
+            .total
+            .events,
+        0
+    );
     assert_eq!(stored(&rig).await?.ok_or("written")?["total"]["events"], 0);
     Ok(())
 }
@@ -148,10 +193,16 @@ async fn a_reset_before_storage_answers_discards_the_stored_totals() -> TestResu
 async fn a_host_without_storage_is_not_asked_again_within_the_cooldown() -> TestResult {
     let mut rig = rig(false).await?;
     let savings = Savings::new();
-    savings.record(Some(&rig.module), &req(200, 100)).await;
+    savings
+        .record(Some(&rig.module), &req(200, 100))
+        .await
+        .unwrap();
     rig.serve_storage().await?;
     // Still inside the cooldown: the late port is not looked up yet.
-    savings.record(Some(&rig.module), &req(200, 100)).await;
+    savings
+        .record(Some(&rig.module), &req(200, 100))
+        .await
+        .unwrap();
     assert!(stored(&rig).await?.is_none());
     Ok(())
 }
@@ -272,7 +323,7 @@ async fn an_import_whose_write_fails_is_an_error_leaves_totals_alone_and_can_ret
     let failed = savings.import(None, legacy.clone()).await;
     assert!(failed.is_err(), "a lost write must not look like a handoff");
     assert_eq!(
-        savings.stats(None).await.total.events,
+        savings.stats(None).await.unwrap().total.events,
         0,
         "totals roll back"
     );
@@ -281,7 +332,68 @@ async fn an_import_whose_write_fails_is_an_error_leaves_totals_alone_and_can_ret
         .fail_puts
         .store(false, std::sync::atomic::Ordering::SeqCst);
     assert!(savings.import(None, legacy).await.unwrap());
-    assert_eq!(savings.stats(None).await.total.tokens_saved, 20);
+    assert_eq!(savings.stats(None).await.unwrap().total.tokens_saved, 20);
     let stored = flaky.get(SAVINGS_COLLECTION, SAVINGS_DOC_ID).await.unwrap();
     assert_eq!(stored.unwrap().doc["total"]["events"], 3);
+}
+
+#[tokio::test]
+async fn governed_document_binding_persists_savings_without_a_connection_fallback() {
+    let rig = rig(true).await.unwrap();
+    let docs = Arc::clone(rig.backend.for_scope(&Scope::local()).unwrap().documents());
+    let savings = Savings::with_documents(docs, true);
+
+    savings.record(None, &req(200, 100)).await.unwrap();
+
+    assert_eq!(savings.stats(None).await.unwrap().total.events, 1);
+    assert_eq!(
+        stored(&rig).await.unwrap().unwrap()["total"]["events"],
+        1,
+        "the bound document store persists the instance ledger"
+    );
+}
+
+#[tokio::test]
+async fn failed_record_write_rolls_back_the_instance_ledger() {
+    let backend = tinystoragedrivers_core::MemoryStorage::new();
+    let inner = Arc::clone(backend.for_scope(&Scope::local()).unwrap().documents());
+    let flaky = Arc::new(FlakyDocs {
+        inner,
+        fail_puts: std::sync::atomic::AtomicBool::new(true),
+    });
+    let savings = Savings::with_documents(flaky.clone(), true);
+
+    assert!(savings.record(None, &req(200, 100)).await.is_err());
+    assert_eq!(savings.stats(None).await.unwrap().total.events, 0);
+
+    flaky
+        .fail_puts
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    savings.record(None, &req(200, 100)).await.unwrap();
+    assert_eq!(savings.stats(None).await.unwrap().total.events, 1);
+}
+
+#[tokio::test]
+async fn failed_reset_write_restores_the_previous_instance_ledger() {
+    let backend = tinystoragedrivers_core::MemoryStorage::new();
+    let inner = Arc::clone(backend.for_scope(&Scope::local()).unwrap().documents());
+    let flaky = Arc::new(FlakyDocs {
+        inner,
+        fail_puts: std::sync::atomic::AtomicBool::new(false),
+    });
+    let savings = Savings::with_documents(flaky.clone(), true);
+    savings.record(None, &req(200, 100)).await.unwrap();
+    assert_eq!(savings.stats(None).await.unwrap().total.events, 1);
+
+    flaky
+        .fail_puts
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(savings.reset(None).await.is_err());
+    assert_eq!(savings.stats(None).await.unwrap().total.events, 1);
+
+    flaky
+        .fail_puts
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    savings.reset(None).await.unwrap();
+    assert_eq!(savings.stats(None).await.unwrap().total.events, 0);
 }

@@ -1,7 +1,11 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
+use serde::Deserialize;
 use tinybus::{Connection, Result as BusResult};
-use tinyjuice::cache::store::RangeUnit;
+use tinybus_module::ModuleSetupContext;
+use tinyjuice::cache::store::{CcrStore, RangeUnit};
+use tinyjuice::llm::{GenerateCallback, GenerateFuture};
+use tinyjuice::summarize::SummaryState;
 use tinyjuice::types::{AgentTokenjuiceCompression, CompressedOutput, ContentHint};
 
 // The interface's vocabulary is the contract crate's, not this adapter's.
@@ -20,35 +24,136 @@ use tinyjuice_bus::wire::{
 /// seconds, well past the bus default; this bounds a hung host, not a slow one.
 const GENERATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// The compression service. `connection` is the module's bus connection, used
-/// to reach the host's storage; a service without one keeps the cache in memory.
-#[derive(Clone, Default)]
+/// One published Compression service and its immutable storage/profile ports.
+#[derive(Clone)]
 pub(crate) struct Compression {
-    pub(crate) connection: Option<Connection>,
+    state: Arc<CompressionState>,
+}
+
+struct CompressionState {
+    connection: Option<Connection>,
+    storage: Option<crate::storage::StorageBinding>,
+    require_storage: bool,
+    options: RwLock<tinyjuice::types::CompressOptions>,
+    ccr: crate::storage::InstanceCcrStore,
+    summaries: SummaryState,
+    savings: crate::savings_store::Savings,
+    generate: Arc<GenerateCallback>,
+}
+
+impl Compression {
+    pub(crate) fn new(
+        connection: Option<Connection>,
+        storage: Option<crate::storage::StorageBinding>,
+        require_storage: bool,
+    ) -> Self {
+        let generate = connection.as_ref().map_or_else(
+            || {
+                Arc::new(|_: GenerateRequest| Box::pin(async { Ok(None) }) as GenerateFuture)
+                    as Arc<GenerateCallback>
+            },
+            generate_callback,
+        );
+        let savings = storage.as_ref().filter(|_| require_storage).map_or_else(
+            crate::savings_store::Savings::new,
+            |storage| {
+                crate::savings_store::Savings::with_documents(
+                    Arc::clone(&storage.documents),
+                    require_storage,
+                )
+            },
+        );
+        Self {
+            state: Arc::new(CompressionState {
+                savings,
+                connection,
+                storage,
+                require_storage,
+                options: RwLock::new(tinyjuice::types::CompressOptions::default()),
+                ccr: crate::storage::InstanceCcrStore::new(),
+                summaries: SummaryState::default(),
+                generate,
+            }),
+        }
+    }
+
+    fn options(&self) -> tinyjuice::types::CompressOptions {
+        self.state
+            .options
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+impl Default for Compression {
+    fn default() -> Self {
+        Self::new(None, None, false)
+    }
+}
+
+fn generate_callback(connection: &Connection) -> Arc<GenerateCallback> {
+    let connection = connection.clone();
+    Arc::new(move |request: GenerateRequest| {
+        let connection = connection.clone();
+        Box::pin(async move {
+            let proxy = connection
+                .proxy(ML_HOST_NAME, ML_HOST_PATH, ML_HOST_NAME)
+                .map_err(|error| error.to_string())?
+                .with_timeout(GENERATE_TIMEOUT);
+            proxy
+                .call(ml_host::GENERATE, (request,))
+                .await
+                .map_err(|error| error.to_string())
+        }) as GenerateFuture
+    })
 }
 
 #[tinybus::interface(name = "ai.tinyhumans.tinyjuice.Compression")]
 impl Compression {
     pub(crate) async fn install(&self, request: InstallRequest) -> BusResult<()> {
-        tinyjuice::tool_integration::install_config(
-            request.options,
-            request.max_cache_entries,
-            request.max_cache_bytes,
-            request.ccr_ttl_secs,
-        );
-        // Durable CCR is backed by host storage. The module never receives or
-        // writes a filesystem path for its cache.
-        let durable = match (request.ccr_durable, self.connection.clone()) {
-            (true, Some(connection)) => {
-                crate::storage::durable_tier(
-                    connection,
-                    request.ccr_ttl_secs.map(std::time::Duration::from_secs),
-                )
-                .await
+        let ttl = request.ccr_ttl_secs.map(std::time::Duration::from_secs);
+        let durable = if request.ccr_durable {
+            if self.state.require_storage {
+                match self.state.storage.as_ref() {
+                    Some(storage) => {
+                        match crate::storage::durable_tier_on(Arc::clone(&storage.blobs), ttl).await
+                        {
+                            Ok(durable) => Some(durable),
+                            Err(error) => {
+                                log::warn!(
+                                    "[tinyjuice_module] configured CCR store unavailable: {error}"
+                                );
+                                return Err(tinybus::Error::failed(
+                                    "configured CCR storage unavailable",
+                                ));
+                            }
+                        }
+                    }
+                    None => {
+                        return Err(tinybus::Error::failed("configured CCR storage unavailable"));
+                    }
+                }
+            } else {
+                match self.state.connection.as_ref() {
+                    Some(connection) => {
+                        crate::storage::legacy_durable_tier(connection.clone(), ttl).await
+                    }
+                    None => None,
+                }
             }
-            _ => None,
+        } else {
+            None
         };
-        tinyjuice::cache::set_durable_tier(durable);
+        self.state
+            .ccr
+            .configure(request.max_cache_entries, request.max_cache_bytes, ttl);
+        self.state.ccr.set_durable(durable);
+        *self
+            .state
+            .options
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = request.options;
         Ok(())
     }
 
@@ -58,9 +163,18 @@ impl Compression {
             .to_string())
     }
 
-    async fn compress(&self, content: String, hint: ContentHint) -> BusResult<CompressedOutput> {
-        let options = tinyjuice::tool_integration::current_options();
-        Ok(tinyjuice::compress_content(&content, Some(hint), &options).await)
+    pub(crate) async fn compress(
+        &self,
+        content: String,
+        hint: ContentHint,
+    ) -> BusResult<CompressedOutput> {
+        Ok(tinyjuice::compress_content_with_store(
+            &content,
+            Some(hint),
+            &self.options(),
+            &self.state.ccr,
+        )
+        .await)
     }
 
     async fn compact(
@@ -70,21 +184,24 @@ impl Compression {
         enabled: bool,
         profile: AgentTokenjuiceCompression,
     ) -> BusResult<CompactResponse> {
-        Ok(compact_request(CompactRequest {
-            content,
-            tool_name,
-            enabled,
-            profile,
-            arguments: None,
-            focus: None,
-            context_token: None,
-            scope: None,
-        })
+        Ok(compact_request(
+            &self.state,
+            CompactRequest {
+                content,
+                tool_name,
+                enabled,
+                profile,
+                arguments: None,
+                focus: None,
+                context_token: None,
+                scope: None,
+            },
+        )
         .await)
     }
 
     async fn compact_with(&self, request: CompactRequest) -> BusResult<CompactResponse> {
-        Ok(compact_request(request).await)
+        Ok(compact_request(&self.state, request).await)
     }
 
     async fn retrieve(
@@ -93,7 +210,7 @@ impl Compression {
         range: Option<RetrieveRange>,
     ) -> BusResult<Option<String>> {
         Ok(match range {
-            Some(range) => tinyjuice::cache::retrieve_range(
+            Some(range) => self.state.ccr.get_range(
                 &token,
                 range.start,
                 range.end,
@@ -102,7 +219,7 @@ impl Compression {
                     WireRangeUnit::Lines => RangeUnit::Lines,
                 },
             ),
-            None => tinyjuice::cache::retrieve(&token),
+            None => self.state.ccr.get(&token),
         })
     }
 
@@ -113,7 +230,7 @@ impl Compression {
         let reply = match serde_json::from_str::<tinyjuice::repl::ReplOp>(&op) {
             Err(e) => serde_json::json!({ "error": format!("invalid op: {e}") }),
             Ok(op) => match tinyjuice::repl::run_op(
-                &tinyjuice::cache::GlobalCcrStore,
+                &self.state.ccr,
                 &handle,
                 &op,
                 &tinyjuice::repl::ReplLimits::default(),
@@ -135,18 +252,20 @@ impl Compression {
         let model = request
             .context_token
             .map(|context_token| tinyjuice::repl::ModelSummary {
-                options: tinyjuice::tool_integration::current_options(),
+                options: self.options(),
                 context_token,
                 scope: request.scope,
             });
         let result = match request.target {
             QueryTarget::Handle { token } => {
-                tinyjuice::repl::run_op_with_model(
-                    &tinyjuice::cache::GlobalCcrStore,
+                tinyjuice::repl::run_op_with_model_with_context(
+                    &self.state.ccr,
                     &token,
                     &request.op,
                     &limits,
                     model.as_ref(),
+                    &self.state.summaries,
+                    self.state.generate.clone(),
                 )
                 .await
             }
@@ -154,11 +273,13 @@ impl Compression {
                 if content.len() > tinyjuice_bus::wire::MAX_QUERY_CONTENT_BYTES {
                     return Ok(Err(QueryError::InputTooLarge));
                 }
-                tinyjuice::repl::run_on_text_with_model(
+                tinyjuice::repl::run_on_text_with_model_with_context(
                     &content,
                     &request.op,
                     &limits,
                     model.as_ref(),
+                    &self.state.summaries,
+                    self.state.generate.clone(),
                 )
                 .await
             }
@@ -183,7 +304,7 @@ impl Compression {
     }
 
     async fn cache_stats(&self) -> BusResult<CacheStats> {
-        let (entries, bytes) = tinyjuice::cache::stats();
+        let (entries, bytes) = self.state.ccr.stats();
         Ok(CacheStats { entries, bytes })
     }
 
@@ -198,19 +319,26 @@ impl Compression {
         &self,
         request: tinyjuice_bus::savings::RecordSavingsRequest,
     ) -> BusResult<()> {
-        savings().record(self.connection.as_ref(), &request).await;
-        Ok(())
+        self.state
+            .savings
+            .record(self.state.connection.as_ref(), &request)
+            .await
     }
 
     /// Return a consistent copy of the module-owned savings totals.
     async fn savings_stats(&self) -> BusResult<tinyjuice_bus::savings::SavingsAggregate> {
-        Ok(savings().stats(self.connection.as_ref()).await)
+        self.state
+            .savings
+            .stats(self.state.connection.as_ref())
+            .await
     }
 
     /// Clear module-owned savings, in memory and in storage.
     async fn reset_savings(&self) -> BusResult<()> {
-        savings().reset(self.connection.as_ref()).await;
-        Ok(())
+        self.state
+            .savings
+            .reset(self.state.connection.as_ref())
+            .await
     }
 
     /// Adopt a legacy snapshot when nothing was recorded yet.
@@ -218,7 +346,10 @@ impl Compression {
         &self,
         legacy: tinyjuice_bus::savings::SavingsAggregate,
     ) -> BusResult<bool> {
-        savings().import(self.connection.as_ref(), legacy).await
+        self.state
+            .savings
+            .import(self.state.connection.as_ref(), legacy)
+            .await
     }
 }
 
@@ -239,7 +370,7 @@ fn query_limits(requested: tinyjuice_bus::repl::ReplLimits) -> tinyjuice_bus::re
 /// `CompactWith` with no arguments, focus or context. `enabled = false` turns
 /// the content router off but not the summary stage, which is gated by its
 /// own option and a context token.
-async fn compact_request(request: CompactRequest) -> CompactResponse {
+async fn compact_request(state: &CompressionState, request: CompactRequest) -> CompactResponse {
     let CompactRequest {
         content,
         tool_name,
@@ -251,17 +382,28 @@ async fn compact_request(request: CompactRequest) -> CompactResponse {
         scope,
     } = request;
     let original_tokens = tinyjuice::tokens::estimate_tokens(&content);
-    let report = tinyjuice::tool_integration::compact_tool_output(ToolOutputCall {
-        tool_name: &tool_name,
-        arguments: arguments.as_ref(),
-        output: &content,
-        exit_code: None,
-        profile,
-        compaction_enabled: enabled,
-        focus: focus.as_deref(),
-        context_token: context_token.as_deref(),
-        scope: scope.as_deref(),
-    })
+    let options = state
+        .options
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let report = tinyjuice::tool_integration::compact_tool_output_with_context(
+        ToolOutputCall {
+            tool_name: &tool_name,
+            arguments: arguments.as_ref(),
+            output: &content,
+            exit_code: None,
+            profile,
+            compaction_enabled: enabled,
+            focus: focus.as_deref(),
+            context_token: context_token.as_deref(),
+            scope: scope.as_deref(),
+        },
+        &options,
+        &state.ccr,
+        &state.summaries,
+        state.generate.clone(),
+    )
     .await;
     let stats = report.stats;
     let compacted_tokens = tinyjuice::tokens::estimate_tokens(&report.text);
@@ -283,48 +425,74 @@ async fn compact_request(request: CompactRequest) -> CompactResponse {
     }
 }
 
-async fn setup(connection: Connection) -> BusResult<()> {
-    // The summary stage's model call goes to the same host object: the module
-    // writes the prompt, the host owns the model and the turn it runs under.
-    let llm_connection = connection.clone();
-    tinyjuice::llm::configure_callback(Some(Arc::new(move |request: GenerateRequest| {
-        let connection = llm_connection.clone();
-        Box::pin(async move {
-            let proxy = connection
-                .proxy(ML_HOST_NAME, ML_HOST_PATH, ML_HOST_NAME)
-                .map_err(|error| error.to_string())?
-                .with_timeout(GENERATE_TIMEOUT);
-            proxy
-                .call(ml_host::GENERATE, (request,))
-                .await
-                .map_err(|error| error.to_string())
-        })
-    })));
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct StorageSetupOptions {
+    storage_descriptor: Option<tinystoragedrivers_busproxy::governed::StorageDescriptor>,
+}
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ModuleSetupConfig {
+    Null(()),
+    Options(StorageSetupOptions),
+}
+
+impl ModuleSetupConfig {
+    fn storage_descriptor(
+        self,
+    ) -> Option<tinystoragedrivers_busproxy::governed::StorageDescriptor> {
+        match self {
+            Self::Null(()) => None,
+            Self::Options(options) => options.storage_descriptor,
+        }
+    }
+}
+
+async fn setup(context: ModuleSetupContext, config: ModuleSetupConfig) -> BusResult<()> {
+    crate::migration::serve(&context).await?;
+    let connection = context.connection().clone();
+    let descriptor = config.storage_descriptor();
+    let require_storage = descriptor.is_some();
+    let storage = if require_storage {
+        crate::storage::bind(connection.clone(), descriptor).await?
+    } else {
+        None
+    };
+    setup_connection_services_with_storage(connection, storage, require_storage).await
+}
+
+#[cfg(test)]
+async fn setup_connection_services(connection: Connection) -> BusResult<()> {
+    let storage = crate::storage::bind(connection.clone(), None).await?;
+    setup_connection_services_with_storage(connection, storage, false).await
+}
+
+async fn setup_connection_services_with_storage(
+    connection: Connection,
+    storage: Option<crate::storage::StorageBinding>,
+    require_storage: bool,
+) -> BusResult<()> {
     connection
         .serve_at(
             OBJECT_PATH.try_into()?,
-            Compression {
-                connection: Some(connection.clone()),
-            },
+            Compression::new(Some(connection.clone()), storage, require_storage),
         )
         .await?;
     connection.request_name(BUS_NAME).await?;
     Ok(())
 }
 
-// Process-global state audit (static-link / co-linking): every process-wide
-// static reachable from this module (the savings ledger below, the `tinyjuice`
-// engine's LLM callback, savings recorders and CCR cache limits) is private to
-// the `tinyjuice` crate, so another module linked into the same executable can
-// neither observe nor clobber it. Only one TinyJuice instance may exist per
-// process, which matches the registry (one `tinyjuice` module).
 #[allow(missing_docs, unreachable_pub)]
 pub(crate) mod exports {
     tinybus_module::module_export_optional_static! {
-        setup = super::setup,
+        setup_with_context = super::setup,
+        config = super::ModuleSetupConfig,
         worker_threads = 2,
-        provides = ["ai.tinyhumans.tinyjuice.Compression"],
+        provides = [
+            "ai.tinyhumans.tinyjuice.Compression",
+            "org.tinystoragedrivers.Migration",
+        ],
         methods = [
             "Install",
             "Detect",
@@ -352,9 +520,3 @@ pub(crate) mod exports {
 #[cfg(test)]
 #[path = "service_tests.rs"]
 mod tests;
-
-/// One savings ledger per loaded module, shared by its service calls.
-fn savings() -> &'static crate::savings_store::Savings {
-    static SAVINGS: std::sync::OnceLock<crate::savings_store::Savings> = std::sync::OnceLock::new();
-    SAVINGS.get_or_init(crate::savings_store::Savings::new)
-}

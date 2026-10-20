@@ -14,6 +14,11 @@ pub use tinyjuice_bus::wire::GenerateRequest;
 pub type GenerateFuture = Pin<Box<dyn Future<Output = Result<Option<String>, String>> + Send>>;
 pub type GenerateCallback = dyn Fn(GenerateRequest) -> GenerateFuture + Send + Sync + 'static;
 
+/// Adapt the process-global callback slot for legacy convenience APIs.
+pub(crate) fn global_generate_callback() -> Arc<GenerateCallback> {
+    Arc::new(|request| Box::pin(generate(request)))
+}
+
 fn callback_cell() -> &'static RwLock<Option<Arc<GenerateCallback>>> {
     static CALLBACK: OnceLock<RwLock<Option<Arc<GenerateCallback>>>> = OnceLock::new();
     CALLBACK.get_or_init(|| RwLock::new(None))
