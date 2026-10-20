@@ -151,7 +151,6 @@ async fn compression_services_keep_durable_ccr_in_their_own_storage() {
         !second_has_blob,
         "a second service must not receive another instance's CCR original"
     );
-    tinyjuice::cache::set_durable_tier(None);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

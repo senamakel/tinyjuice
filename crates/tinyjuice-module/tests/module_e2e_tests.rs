@@ -238,14 +238,242 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         )
         .await
         .expect("retrieve should succeed");
-    assert_eq!(recovered, Some(content));
+    assert_eq!(recovered, Some(content.clone()));
     typed_queries_execute_in_the_loaded_artifact(&proxy, &token).await;
 
-    assert!(matches!(modules.list()[0].state, ModuleState::Ready));
+    assert!(modules
+        .list()
+        .iter()
+        .any(|module| module.name == loaded.name && matches!(module.state, ModuleState::Ready)));
 
     compact_with_calls_back_to_the_host_for_a_focused_summary(&client, &proxy).await;
     savings_are_computed_and_persisted_inside_the_loaded_module(&proxy).await;
+
+    let methods = tinyjuice_bus::names::methods;
+    proxy
+        .call::<()>(
+            methods::RECORD_SAVINGS,
+            (tinyjuice_bus::savings::RecordSavingsRequest {
+                model: "profile-a".into(),
+                compressor: "generic".into(),
+                original_tokens: 300,
+                compacted_tokens: 100,
+                input_per_mtok_usd: None,
+            },),
+        )
+        .await
+        .unwrap();
+    let stats_a: tinyjuice_bus::savings::SavingsAggregate =
+        proxy.call(methods::SAVINGS_STATS, ()).await.unwrap();
+    assert_eq!(stats_a.total.tokens_saved, 200);
+    let saved_a = governed
+        .backend
+        .for_scope(&Scope::new("juice-profile-a").unwrap())
+        .unwrap()
+        .documents()
+        .get(
+            tinyjuice_bus::storage::SAVINGS_COLLECTION,
+            tinyjuice_bus::savings::SAVINGS_DOC_ID,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved_a.doc["total"]["tokens_saved"], 200);
+
+    modules
+        .reinitialize(
+            &loaded.name,
+            serde_json::json!({"storage_descriptor": descriptor_b.clone()}),
+        )
+        .await
+        .expect("the same peer should bind profile B on reinitialization");
+    let current_migration = MigrationModuleClient::discover(&controller, &module_peer)
+        .await
+        .unwrap();
+    assert_eq!(current_migration.declaration().owner.as_str(), "juice");
+    let cache_b: tinyjuice_bus::wire::CacheStats = proxy.call("CacheStats", ()).await.unwrap();
+    assert_eq!(cache_b.entries, 0, "profile B starts with a fresh memory cache");
+    let from_a: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (token.clone(), Option::<serde_json::Value>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(from_a, None, "profile B cannot retrieve profile A's CCR data");
+    let fresh_savings: tinyjuice_bus::savings::SavingsAggregate =
+        proxy.call(methods::SAVINGS_STATS, ()).await.unwrap();
+    assert_eq!(fresh_savings.total.events, 0, "profile B has its own savings ledger");
+    install_durable_profile(&proxy).await;
+
+    let content_b = (0..200)
+        .map(|index| {
+            if index == 137 {
+                format!("ERROR profile-b request failed id={index}\n")
+            } else {
+                format!("INFO profile-b request completed id={index}\n")
+            }
+        })
+        .collect::<String>();
+    let output_b: CompressedOutput = proxy
+        .call(
+            "Compress",
+            (content_b.clone(), serde_json::json!({ "explicit": "log" })),
+        )
+        .await
+        .unwrap();
+    let token_b = output_b.ccr_token.expect("profile B durable store should retain its original");
+    assert_ne!(token, token_b, "profile content has distinct recovery tokens");
+    let scope_b = governed
+        .backend
+        .for_scope(&Scope::new("juice-profile-b").unwrap())
+        .unwrap();
+    let key_b = format!("{}{token_b}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]);
+    assert_eq!(
+        scope_b.blobs().get(&key_b).await.unwrap().unwrap().bytes,
+        content_b.as_bytes()
+    );
+    let from_b: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (token_b.clone(), Option::<serde_json::Value>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(from_b.as_deref(), Some(content_b.as_str()));
+    let still_not_a: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (token.clone(), Option::<serde_json::Value>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(still_not_a, None);
+    proxy
+        .call::<()>(
+            methods::RECORD_SAVINGS,
+            (tinyjuice_bus::savings::RecordSavingsRequest {
+                model: "profile-b".into(),
+                compressor: "generic".into(),
+                original_tokens: 500,
+                compacted_tokens: 200,
+                input_per_mtok_usd: None,
+            },),
+        )
+        .await
+        .unwrap();
+    let saved_b = scope_b
+        .documents()
+        .get(
+            tinyjuice_bus::storage::SAVINGS_COLLECTION,
+            tinyjuice_bus::savings::SAVINGS_DOC_ID,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved_b.doc["total"]["tokens_saved"], 300);
+    assert_eq!(saved_a.doc["total"]["tokens_saved"], 200);
+
+    // Reinitialize onto A once more, then revoke its current-only lease. The
+    // durable-only token and persisted savings write must fail closed.
+    modules
+        .reinitialize(
+            &loaded.name,
+            serde_json::json!({"storage_descriptor": descriptor_a.clone()}),
+        )
+        .await
+        .unwrap();
+    install_durable_profile(&proxy).await;
+    let restored_a: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (token.clone(), Option::<serde_json::Value>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(restored_a.as_deref(), Some(content.as_str()));
+    assert!(governed.revoke(&lease_a).await, "profile A lease should revoke");
+    let revoked_a: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (token.clone(), Option::<serde_json::Value>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revoked_a, None, "revoked durable-only CCR must not fall back");
+    assert!(proxy.call::<()>(methods::RECORD_SAVINGS, (tinyjuice_bus::savings::RecordSavingsRequest {
+        model: "revoked-a".into(), compressor: "generic".into(), original_tokens: 200, compacted_tokens: 100, input_per_mtok_usd: None,
+    },)).await.is_err(), "revoked document writes must be reported as failed");
+
+    modules
+        .reinitialize(
+            &loaded.name,
+            serde_json::json!({"storage_descriptor": descriptor_b.clone()}),
+        )
+        .await
+        .unwrap();
+    install_durable_profile(&proxy).await;
+    let from_b_after_a_revoke: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (token_b.clone(), Option::<serde_json::Value>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(from_b_after_a_revoke.as_deref(), Some(content_b.as_str()));
+    let b_savings: tinyjuice_bus::savings::SavingsAggregate =
+        proxy.call(methods::SAVINGS_STATS, ()).await.unwrap();
+    assert_eq!(b_savings.total.tokens_saved, 300);
+
+    // A revoked descriptor cannot replace the live B service or retarget it.
+    assert!(modules
+        .reinitialize(
+            &loaded.name,
+            serde_json::json!({"storage_descriptor": descriptor_a}),
+        )
+        .await
+        .is_err());
+    let live_b: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (token_b, Option::<serde_json::Value>::None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(live_b.as_deref(), Some(content_b.as_str()));
+    assert!(governed.revoke(&lease_b).await, "profile B lease should revoke");
+    governed.shutdown().await.unwrap();
     broker_task.abort();
+}
+
+async fn install_durable_profile(proxy: &tinybus::Proxy) {
+    proxy
+        .call::<()>(
+            "Install",
+            (serde_json::json!({
+                "options": {
+                    "routerEnabled": true,
+                    "ccrEnabled": true,
+                    "searchEnabled": true,
+                    "codeEnabled": true,
+                    "htmlEnabled": true,
+                    "mlTextEnabled": false,
+                    "minBytesToCompress": 64,
+                    "minBytesToCompressLog": 32,
+                    "ccrMinTokens": 16,
+                    "lossyWithoutCcr": false,
+                    "maxInlineChars": null,
+                    "codeTargetRatio": null,
+                    "charsPerToken": 4.0
+                },
+                "maxCacheEntries": 8,
+                "maxCacheBytes": 1,
+                "ccrTtlSecs": 600,
+                "ccrDurable": true
+            }),),
+        )
+        .await
+        .expect("durable profile install should succeed");
 }
 
 async fn migration_client_is_selected_and_confidential(
