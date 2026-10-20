@@ -31,8 +31,10 @@ fn install_request_defaults_to_no_host_durable_ccr() {
 
 #[test]
 fn install_request_rejects_retired_disk_tier_root_even_when_null() {
-    for disk_tier_root in [serde_json::json!("/workspace/.tokenjuice/ccr"), serde_json::Value::Null]
-    {
+    for disk_tier_root in [
+        serde_json::json!("/workspace/.tokenjuice/ccr"),
+        serde_json::Value::Null,
+    ] {
         let request = serde_json::json!({
             "options": {},
             "maxCacheEntries": 8,
