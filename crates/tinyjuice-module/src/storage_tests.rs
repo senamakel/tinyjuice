@@ -114,8 +114,9 @@ async fn descriptor_binding_uses_the_granted_blob_and_document_ports() -> TestRe
     let controller = Connection::connect(Box::new(controller_transport)).await?;
     let modules = ModuleHost::new(broker);
     let module = Connection::connect(bus.connect().await?).await?;
-    let peer: tinybus::BusName = tinyjuice_bus::names::BUS_NAME.parse()?;
-    module.request_name(peer.clone()).await?;
+    let peer = module
+        .unique_name()
+        .expect("the connected module has a peer identity");
 
     let governed = governed_fixture::JuiceStorage::attach(&modules, &controller)
         .await
