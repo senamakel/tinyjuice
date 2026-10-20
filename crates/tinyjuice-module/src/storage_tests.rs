@@ -120,7 +120,7 @@ async fn descriptor_binding_uses_the_granted_blob_and_document_ports() -> TestRe
     let governed = governed_fixture::JuiceStorage::attach(&modules, &controller)
         .await
         .unwrap();
-    let (_lease, descriptor) = governed.lease("profile-a", &peer).await.unwrap();
+    let (lease, descriptor) = governed.lease("profile-a", &peer).await.unwrap();
     let binding = bind(module, Some(descriptor))
         .await?
         .ok_or("the configured descriptor resolves storage ports")?;
@@ -149,6 +149,12 @@ async fn descriptor_binding_uses_the_granted_blob_and_document_ports() -> TestRe
         put.token()
     );
     assert!(scoped.blobs().get(&key).await?.is_some());
+    assert!(governed.revoke(&lease).await);
+    assert_eq!(
+        store.get(put.token()),
+        None,
+        "revoking the host grant makes descriptor-bound durable reads unavailable"
+    );
 
     governed.shutdown().await?;
     broker_task.abort();
