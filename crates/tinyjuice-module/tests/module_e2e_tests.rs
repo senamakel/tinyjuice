@@ -13,13 +13,15 @@ use tinybus::{
     Connection,
     module::{ModuleHost, ModuleState},
     test_support::{admit_module, wait_until_serving},
+    transport::memory::MemoryBus,
 };
 use tinyjuice::types::{AgentTokenjuiceCompression, CompressedOutput, ContentHint, ContentKind};
 use tinyjuice_bus::wire::CompactResponse;
 use tinyjuice_module::{BUS_NAME, OBJECT_PATH};
 use tinystoragedrivers_core::{
     MemoryStorage, Scope, StorageBackend,
-    schema::{MigrateOptions, MigrationDeliveryClient, Registry, Schema, TransformKind},
+    schema::{MigrateOptions, Registry, Schema, TransformKind},
+    schema::delivery::MigrationDeliveryClient,
 };
 use tinystoragedrivers_tinybus::migration::{
     EXCHANGE_MEMBER, GET_SCHEMA_MEMBER, MIGRATION_INTERFACE, MIGRATION_OBJECT_PATH,
