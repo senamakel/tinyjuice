@@ -190,6 +190,12 @@ async fn migration_client_is_selected_and_confidential(
         .await
         .expect_err("an unselected peer must be denied before decoding");
     assert!(
+        malformed
+            .to_string()
+            .contains("migration authority unavailable"),
+        "the selected-host check must reject the peer before payload decoding"
+    );
+    assert!(
         !malformed.to_string().contains("secret-marker"),
         "authorization failures must not reflect request content"
     );
