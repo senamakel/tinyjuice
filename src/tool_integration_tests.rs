@@ -407,6 +407,65 @@ async fn handle_mode_is_honored_before_a_summary() {
     assert!(report.notice.is_none());
 }
 
+#[tokio::test]
+async fn injected_compaction_keeps_summary_and_ccr_state_with_its_owner() {
+    use crate::cache::MemoryCcrStore;
+    use crate::summarize::SummaryState;
+    use crate::types::LlmSummaryMode;
+    use std::sync::Arc;
+
+    let mut options = CompressOptions::default();
+    options.router_enabled = true;
+    options.ccr_enabled = true;
+    options.llm_summary_enabled = true;
+    options.llm_summary_mode = LlmSummaryMode::Auto;
+    options.llm_summary_threshold_tokens = 10;
+    options.min_bytes_to_compress = 32;
+    options.min_bytes_to_compress_log = 32;
+
+    let first_store = MemoryCcrStore::default();
+    let second_store = MemoryCcrStore::default();
+    let first_state = SummaryState::default();
+    let second_state = SummaryState::default();
+    let first_generate: Arc<crate::llm::GenerateCallback> = Arc::new(|_| {
+        Box::pin(async { Ok(Some("first owner's summary".to_owned())) })
+    });
+    let second_generate: Arc<crate::llm::GenerateCallback> = Arc::new(|_| {
+        Box::pin(async { Ok(Some("second owner's summary".to_owned())) })
+    });
+    let content = "same stored source content ".repeat(40);
+    let mut first_call = call(&content, AgentTokenjuiceCompression::Full, Some("source"));
+    first_call.scope = Some("same-scope" );
+    let first = compact_tool_output_with_context(
+        first_call,
+        &options,
+        &first_store,
+        &first_state,
+        first_generate,
+    )
+    .await;
+    assert!(first.text.starts_with("first owner's summary"));
+    assert_eq!(first_store.stats().0, 1);
+    assert_eq!(second_store.stats().0, 0);
+
+    let second_call = call(&content, AgentTokenjuiceCompression::Full, Some("source"));
+    let second_call = ToolOutputCall {
+        scope: Some("same-scope"),
+        ..second_call
+    };
+    let second = compact_tool_output_with_context(
+        second_call,
+        &options,
+        &second_store,
+        &second_state,
+        second_generate,
+    )
+    .await;
+    assert!(second.text.starts_with("second owner's summary"));
+    assert_eq!(second_store.stats().0, 1);
+    assert_eq!(first_store.stats().0, 1);
+}
+
 #[test]
 fn command_arguments_filter_nonstrings_and_prefer_argv() {
     assert_eq!(
