@@ -20,8 +20,8 @@ use tinyjuice_bus::wire::CompactResponse;
 use tinyjuice_module::{BUS_NAME, OBJECT_PATH};
 use tinystoragedrivers_core::{
     MemoryStorage, Scope, StorageBackend,
-    schema::{MigrateOptions, Registry, Schema, TransformKind},
     schema::delivery::MigrationDeliveryClient,
+    schema::{MigrateOptions, Registry, Schema, TransformKind},
 };
 use tinystoragedrivers_tinybus::migration::{
     EXCHANGE_MEMBER, GET_SCHEMA_MEMBER, MIGRATION_INTERFACE, MIGRATION_OBJECT_PATH,

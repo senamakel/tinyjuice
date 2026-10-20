@@ -2,8 +2,8 @@
 //! dynamic one, without a library file or exported C symbols.
 #![cfg(feature = "static-link")]
 
-use tinybus::{Connection, module::ModuleState};
 use tinybus::test_support::wait_until_serving;
+use tinybus::{Connection, module::ModuleState};
 use tinyjuice_module::{BUS_NAME, linked_module};
 use tinystoragedrivers_tinybus::migration::MigrationModuleClient;
 
@@ -49,7 +49,9 @@ async fn linked_module_is_admitted_and_serves_its_bus_name() {
         .await
         .expect("outsider should connect");
     assert!(
-        MigrationModuleClient::discover(&outsider, &peer).await.is_err(),
+        MigrationModuleClient::discover(&outsider, &peer)
+            .await
+            .is_err(),
         "an unselected controller must not discover the schema"
     );
     fixture.broker_task.abort();

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tinybus::{Connection, Result as BusResult};
+use tinybus_module::ModuleSetupContext;
 use tinyjuice::cache::store::RangeUnit;
 use tinyjuice::types::{AgentTokenjuiceCompression, CompressedOutput, ContentHint};
 
@@ -283,7 +284,10 @@ async fn compact_request(request: CompactRequest) -> CompactResponse {
     }
 }
 
-async fn setup(connection: Connection) -> BusResult<()> {
+async fn setup(context: ModuleSetupContext) -> BusResult<()> {
+    let connection = context.connection().clone();
+    crate::migration::serve(&context).await?;
+
     // The summary stage's model call goes to the same host object: the module
     // writes the prompt, the host owns the model and the turn it runs under.
     let llm_connection = connection.clone();
@@ -322,7 +326,7 @@ async fn setup(connection: Connection) -> BusResult<()> {
 #[allow(missing_docs, unreachable_pub)]
 pub(crate) mod exports {
     tinybus_module::module_export_optional_static! {
-        setup = super::setup,
+        setup_with_context = super::setup,
         worker_threads = 2,
         provides = ["ai.tinyhumans.tinyjuice.Compression"],
         methods = [
