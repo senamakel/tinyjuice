@@ -50,10 +50,7 @@ impl Savings {
 
     /// A module instance whose document port was bound from a governed lease
     /// before the Compression service was published.
-    pub(crate) fn with_documents(
-        docs: Arc<dyn DocumentStore>,
-        require_storage: bool,
-    ) -> Self {
+    pub(crate) fn with_documents(docs: Arc<dyn DocumentStore>, require_storage: bool) -> Self {
         Self {
             ledger: SavingsLedger::new(),
             cooldown: CONNECT_COOLDOWN,
@@ -159,11 +156,7 @@ impl Savings {
     /// Changes made before the document could be read are kept: they are
     /// added to the stored totals (or replace them after an early reset) and
     /// the result is written back.
-    async fn load(
-        &self,
-        state: &mut State,
-        connection: Option<&Connection>,
-    ) -> BusResult<()> {
+    async fn load(&self, state: &mut State, connection: Option<&Connection>) -> BusResult<()> {
         if state.loaded {
             return Ok(());
         }

@@ -208,9 +208,14 @@ async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResu
         )
         .await?;
     assert!(output.applied);
-    let token = output.ccr_token.ok_or("memory cache should retain the original")?;
+    let token = output
+        .ccr_token
+        .ok_or("memory cache should retain the original")?;
     let key = format!("{}{token}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]);
-    assert!(host_blobs.get(&key).await?.is_none(), "nothing written to the durable tier");
+    assert!(
+        host_blobs.get(&key).await?.is_none(),
+        "nothing written to the durable tier"
+    );
     assert!(host_blobs.get(&key).await?.is_none(), "nothing written");
     Ok(())
 }

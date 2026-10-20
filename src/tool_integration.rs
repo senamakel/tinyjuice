@@ -19,8 +19,8 @@ use once_cell::sync::OnceCell;
 use serde_json::Value;
 use std::sync::{Arc, RwLock};
 
-use super::compress::route_with_store;
 use super::cache::store::{CcrStore, GlobalCcrStore};
+use super::compress::route_with_store;
 use super::llm::{GenerateCallback, global_generate_callback};
 use super::summarize::SummaryState;
 use super::types::{AgentTokenjuiceCompression, CompressInput, CompressOptions, ContentHint};

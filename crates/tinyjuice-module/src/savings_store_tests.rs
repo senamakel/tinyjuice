@@ -50,16 +50,32 @@ async fn a_new_process_resumes_the_stored_totals() -> TestResult {
         .unwrap();
     let resumed = Savings::new();
     assert_eq!(
-        resumed.stats(Some(&rig.module)).await.unwrap().total.tokens_saved,
+        resumed
+            .stats(Some(&rig.module))
+            .await
+            .unwrap()
+            .total
+            .tokens_saved,
         100
     );
-    resumed.record(Some(&rig.module), &req(200, 100)).await.unwrap();
-    assert_eq!(resumed.stats(Some(&rig.module)).await.unwrap().total.events, 2);
+    resumed
+        .record(Some(&rig.module), &req(200, 100))
+        .await
+        .unwrap();
+    assert_eq!(
+        resumed.stats(Some(&rig.module)).await.unwrap().total.events,
+        2
+    );
     resumed.reset(Some(&rig.module)).await.unwrap();
     let body = stored(&rig).await?.ok_or("empty document kept")?;
     assert_eq!(body["total"]["events"], 0);
     assert_eq!(
-        Savings::new().stats(Some(&rig.module)).await.unwrap().total.events,
+        Savings::new()
+            .stats(Some(&rig.module))
+            .await
+            .unwrap()
+            .total
+            .events,
         0
     );
     Ok(())
@@ -81,13 +97,21 @@ async fn import_adopts_a_legacy_snapshot_only_when_nothing_was_recorded() -> Tes
     let savings = Savings::new();
     assert!(savings.import(Some(&rig.module), legacy.clone()).await?);
     assert_eq!(
-        savings.stats(Some(&rig.module)).await.unwrap().total.tokens_saved,
+        savings
+            .stats(Some(&rig.module))
+            .await
+            .unwrap()
+            .total
+            .tokens_saved,
         20
     );
     assert_eq!(stored(&rig).await?.ok_or("written")?["total"]["events"], 3);
     // Importing again must not double count.
     assert!(!savings.import(Some(&rig.module), legacy).await?);
-    assert_eq!(savings.stats(Some(&rig.module)).await.unwrap().total.events, 3);
+    assert_eq!(
+        savings.stats(Some(&rig.module)).await.unwrap().total.events,
+        3
+    );
     Ok(())
 }
 
@@ -95,8 +119,14 @@ async fn import_adopts_a_legacy_snapshot_only_when_nothing_was_recorded() -> Tes
 async fn without_a_storage_host_totals_stay_in_memory() -> TestResult {
     let rig = rig(false).await?;
     let savings = Savings::new();
-    savings.record(Some(&rig.module), &req(200, 100)).await.unwrap();
-    assert_eq!(savings.stats(Some(&rig.module)).await.unwrap().total.events, 1);
+    savings
+        .record(Some(&rig.module), &req(200, 100))
+        .await
+        .unwrap();
+    assert_eq!(
+        savings.stats(Some(&rig.module)).await.unwrap().total.events,
+        1
+    );
     assert!(stored(&rig).await?.is_none());
     let legacy = SavingsAggregate::default();
     assert!(
@@ -117,7 +147,10 @@ async fn totals_recorded_before_storage_answers_are_added_to_the_stored_ones() -
     let mut late = crate::storage::tests::rig(false).await?;
     late.backend = rig.backend.clone();
     let savings = Savings::with_cooldown(std::time::Duration::ZERO);
-    savings.record(Some(&late.module), &req(400, 100)).await.unwrap();
+    savings
+        .record(Some(&late.module), &req(400, 100))
+        .await
+        .unwrap();
     assert!(
         stored(&rig)
             .await?
@@ -143,7 +176,15 @@ async fn a_reset_before_storage_answers_discards_the_stored_totals() -> TestResu
     let savings = Savings::with_cooldown(std::time::Duration::ZERO);
     savings.reset(Some(&late.module)).await.unwrap();
     late.serve_storage().await?;
-    assert_eq!(savings.stats(Some(&late.module)).await.unwrap().total.events, 0);
+    assert_eq!(
+        savings
+            .stats(Some(&late.module))
+            .await
+            .unwrap()
+            .total
+            .events,
+        0
+    );
     assert_eq!(stored(&rig).await?.ok_or("written")?["total"]["events"], 0);
     Ok(())
 }
@@ -152,10 +193,16 @@ async fn a_reset_before_storage_answers_discards_the_stored_totals() -> TestResu
 async fn a_host_without_storage_is_not_asked_again_within_the_cooldown() -> TestResult {
     let mut rig = rig(false).await?;
     let savings = Savings::new();
-    savings.record(Some(&rig.module), &req(200, 100)).await.unwrap();
+    savings
+        .record(Some(&rig.module), &req(200, 100))
+        .await
+        .unwrap();
     rig.serve_storage().await?;
     // Still inside the cooldown: the late port is not looked up yet.
-    savings.record(Some(&rig.module), &req(200, 100)).await.unwrap();
+    savings
+        .record(Some(&rig.module), &req(200, 100))
+        .await
+        .unwrap();
     assert!(stored(&rig).await?.is_none());
     Ok(())
 }

@@ -49,21 +49,19 @@ impl Compression {
     ) -> Self {
         let generate = connection.as_ref().map_or_else(
             || {
-                Arc::new(|_: GenerateRequest| {
-                    Box::pin(async { Ok(None) }) as GenerateFuture
-                }) as Arc<GenerateCallback>
+                Arc::new(|_: GenerateRequest| Box::pin(async { Ok(None) }) as GenerateFuture)
+                    as Arc<GenerateCallback>
             },
             generate_callback,
         );
-        let savings = storage.as_ref().map_or_else(
-            crate::savings_store::Savings::new,
-            |storage| {
+        let savings = storage
+            .as_ref()
+            .map_or_else(crate::savings_store::Savings::new, |storage| {
                 crate::savings_store::Savings::with_documents(
                     Arc::clone(&storage.documents),
                     require_storage,
                 )
-            },
-        );
+            });
         Self {
             state: Arc::new(CompressionState {
                 savings,
@@ -117,21 +115,20 @@ impl Compression {
         let durable = if request.ccr_durable {
             match self.state.storage.as_ref() {
                 Some(storage) => {
-                    match crate::storage::durable_tier_on(
-                        Arc::clone(&storage.blobs),
-                        ttl,
-                    )
-                    .await
-                    {
+                    match crate::storage::durable_tier_on(Arc::clone(&storage.blobs), ttl).await {
                         Ok(durable) => Some(durable),
                         Err(error) if self.state.require_storage => {
-                            log::warn!("[tinyjuice_module] configured CCR store unavailable: {error}");
+                            log::warn!(
+                                "[tinyjuice_module] configured CCR store unavailable: {error}"
+                            );
                             return Err(tinybus::Error::failed(
                                 "configured CCR storage unavailable",
                             ));
                         }
                         Err(error) => {
-                            log::warn!("[tinyjuice_module] ccr store on host storage unavailable: {error}");
+                            log::warn!(
+                                "[tinyjuice_module] ccr store on host storage unavailable: {error}"
+                            );
                             None
                         }
                     }
@@ -141,11 +138,9 @@ impl Compression {
         } else {
             None
         };
-        self.state.ccr.configure(
-            request.max_cache_entries,
-            request.max_cache_bytes,
-            ttl,
-        );
+        self.state
+            .ccr
+            .configure(request.max_cache_entries, request.max_cache_bytes, ttl);
         self.state.ccr.set_durable(durable);
         *self
             .state
@@ -182,16 +177,19 @@ impl Compression {
         enabled: bool,
         profile: AgentTokenjuiceCompression,
     ) -> BusResult<CompactResponse> {
-        Ok(compact_request(&self.state, CompactRequest {
-            content,
-            tool_name,
-            enabled,
-            profile,
-            arguments: None,
-            focus: None,
-            context_token: None,
-            scope: None,
-        })
+        Ok(compact_request(
+            &self.state,
+            CompactRequest {
+                content,
+                tool_name,
+                enabled,
+                profile,
+                arguments: None,
+                focus: None,
+                context_token: None,
+                scope: None,
+            },
+        )
         .await)
     }
 
@@ -511,4 +509,3 @@ pub(crate) mod exports {
 #[cfg(test)]
 #[path = "service_tests.rs"]
 mod tests;
-

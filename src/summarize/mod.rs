@@ -105,8 +105,9 @@ impl SummaryState {
 
     fn breaker_tripped(&self, scope: &str) -> bool {
         match self.inner.breakers.lock() {
-            Ok(breakers) => breakers.failures.get(scope).copied().unwrap_or(0)
-                >= MAX_CONSECUTIVE_FAILURES,
+            Ok(breakers) => {
+                breakers.failures.get(scope).copied().unwrap_or(0) >= MAX_CONSECUTIVE_FAILURES
+            }
             Err(_) => true,
         }
     }
@@ -318,7 +319,12 @@ pub async fn maybe_summarize_with_context(
 /// dropped can still be read back exactly. When CCR cannot keep the original
 /// and unrecoverable loss is not allowed, the summary is discarded and the
 /// original goes on to the deterministic compressors.
-fn finish(raw: &str, summary: String, opts: &CompressOptions, store: &dyn CcrStore) -> SummaryOutcome {
+fn finish(
+    raw: &str,
+    summary: String,
+    opts: &CompressOptions,
+    store: &dyn CcrStore,
+) -> SummaryOutcome {
     let summary_bytes = summary.len();
     let (token, retained) = if opts.ccr_enabled {
         let put = store.put(raw);

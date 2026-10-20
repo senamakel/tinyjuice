@@ -3,14 +3,18 @@ use tinyjuice::types::CompressOptions;
 
 #[test]
 fn setup_config_accepts_legacy_empty_forms_and_a_typed_storage_descriptor() {
-    assert!(serde_json::from_value::<ModuleSetupConfig>(serde_json::Value::Null)
-        .unwrap()
-        .storage_descriptor()
-        .is_none());
-    assert!(serde_json::from_value::<ModuleSetupConfig>(serde_json::json!({}))
-        .unwrap()
-        .storage_descriptor()
-        .is_none());
+    assert!(
+        serde_json::from_value::<ModuleSetupConfig>(serde_json::Value::Null)
+            .unwrap()
+            .storage_descriptor()
+            .is_none()
+    );
+    assert!(
+        serde_json::from_value::<ModuleSetupConfig>(serde_json::json!({}))
+            .unwrap()
+            .storage_descriptor()
+            .is_none()
+    );
     let configured = serde_json::from_value::<ModuleSetupConfig>(serde_json::json!({
         "storage_descriptor": {
             "service_peer": ":1.23",
@@ -22,11 +26,16 @@ fn setup_config_accepts_legacy_empty_forms_and_a_typed_storage_descriptor() {
     .storage_descriptor()
     .unwrap();
     assert_eq!(configured.service_peer(), ":1.23");
-    assert_eq!(configured.object_root(), "/org/tinystoragedrivers/Storage/Leases/4");
-    assert!(serde_json::from_value::<ModuleSetupConfig>(serde_json::json!({
-        "storage_descriptor": { "unknown": true }
-    }))
-    .is_err());
+    assert_eq!(
+        configured.object_root(),
+        "/org/tinystoragedrivers/Storage/Leases/4"
+    );
+    assert!(
+        serde_json::from_value::<ModuleSetupConfig>(serde_json::json!({
+            "storage_descriptor": { "unknown": true }
+        }))
+        .is_err()
+    );
 }
 
 #[tokio::test]
@@ -128,17 +137,13 @@ async fn compression_services_keep_durable_ccr_in_their_own_storage() {
         )
         .await
         .unwrap();
-    let token = result.ccr_token.expect("durable storage should retain the original");
+    let token = result
+        .ccr_token
+        .expect("durable storage should retain the original");
     let key = format!("{}{}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0], token);
 
-    let first_storage = first
-        .backend
-        .for_scope(&Scope::local())
-        .unwrap();
-    let second_storage = second
-        .backend
-        .for_scope(&Scope::local())
-        .unwrap();
+    let first_storage = first.backend.for_scope(&Scope::local()).unwrap();
+    let second_storage = second.backend.for_scope(&Scope::local()).unwrap();
     let first_blobs = first_storage.blobs();
     let second_blobs = second_storage.blobs();
     let first_has_blob = first_blobs.get(&key).await.unwrap().is_some();
@@ -156,8 +161,8 @@ async fn compression_services_keep_durable_ccr_in_their_own_storage() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compression_services_keep_savings_in_their_own_documents() {
     use crate::storage::tests::rig;
-    use tinystoragedrivers_core::{Scope, StorageBackend};
     use tinyjuice_bus::savings::RecordSavingsRequest;
+    use tinystoragedrivers_core::{Scope, StorageBackend};
 
     let first = rig(true).await.unwrap();
     let second = rig(true).await.unwrap();
@@ -463,10 +468,7 @@ async fn typed_queries_preserve_results_and_structured_errors() {
 #[tokio::test]
 async fn savings_service_records_and_resets_totals() {
     let service = Compression::default();
-    service
-        .configure_savings("ignored".into())
-        .await
-        .unwrap();
+    service.configure_savings("ignored".into()).await.unwrap();
     service.reset_savings().await.unwrap();
     service
         .record_savings(tinyjuice_bus::savings::RecordSavingsRequest {
@@ -482,15 +484,7 @@ async fn savings_service_records_and_resets_totals() {
     assert_eq!(stats.total.tokens_saved, 60);
     assert_eq!(stats.by_model["test-model"].events, 1);
     service.reset_savings().await.unwrap();
-    assert_eq!(
-        service
-            .savings_stats()
-            .await
-            .unwrap()
-            .total
-            .events,
-        0
-    );
+    assert_eq!(service.savings_stats().await.unwrap().total.events, 0);
 }
 
 #[derive(Clone)]

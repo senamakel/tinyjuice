@@ -230,7 +230,10 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         "a durable-only CCR original lands in profile A's governed blob scope"
     );
     let cache_a: tinyjuice_bus::wire::CacheStats = proxy.call("CacheStats", ()).await.unwrap();
-    assert_eq!(cache_a.entries, 0, "one-byte memory cap makes this durable-only");
+    assert_eq!(
+        cache_a.entries, 0,
+        "one-byte memory cap makes this durable-only"
+    );
     let recovered: Option<String> = proxy
         .call(
             "Retrieve",
@@ -241,10 +244,12 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
     assert_eq!(recovered, Some(content.clone()));
     typed_queries_execute_in_the_loaded_artifact(&proxy, &token).await;
 
-    assert!(modules
-        .list()
-        .iter()
-        .any(|module| module.name == loaded.name && matches!(module.state, ModuleState::Ready)));
+    assert!(
+        modules
+            .list()
+            .iter()
+            .any(|module| module.name == loaded.name && matches!(module.state, ModuleState::Ready))
+    );
 
     compact_with_calls_back_to_the_host_for_a_focused_summary(&client, &proxy).await;
     savings_are_computed_and_persisted_inside_the_loaded_module(&proxy).await;
@@ -292,7 +297,10 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         .unwrap();
     assert_eq!(current_migration.declaration().owner.as_str(), "juice");
     let cache_b: tinyjuice_bus::wire::CacheStats = proxy.call("CacheStats", ()).await.unwrap();
-    assert_eq!(cache_b.entries, 0, "profile B starts with a fresh memory cache");
+    assert_eq!(
+        cache_b.entries, 0,
+        "profile B starts with a fresh memory cache"
+    );
     let from_a: Option<String> = proxy
         .call(
             "Retrieve",
@@ -300,10 +308,16 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         )
         .await
         .unwrap();
-    assert_eq!(from_a, None, "profile B cannot retrieve profile A's CCR data");
+    assert_eq!(
+        from_a, None,
+        "profile B cannot retrieve profile A's CCR data"
+    );
     let fresh_savings: tinyjuice_bus::savings::SavingsAggregate =
         proxy.call(methods::SAVINGS_STATS, ()).await.unwrap();
-    assert_eq!(fresh_savings.total.events, 0, "profile B has its own savings ledger");
+    assert_eq!(
+        fresh_savings.total.events, 0,
+        "profile B has its own savings ledger"
+    );
     install_durable_profile(&proxy).await;
 
     let content_b = (0..200)
@@ -322,8 +336,13 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         )
         .await
         .unwrap();
-    let token_b = output_b.ccr_token.expect("profile B durable store should retain its original");
-    assert_ne!(token, token_b, "profile content has distinct recovery tokens");
+    let token_b = output_b
+        .ccr_token
+        .expect("profile B durable store should retain its original");
+    assert_ne!(
+        token, token_b,
+        "profile content has distinct recovery tokens"
+    );
     let scope_b = governed
         .backend
         .for_scope(&Scope::new("juice-profile-b").unwrap())
@@ -392,7 +411,10 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         .await
         .unwrap();
     assert_eq!(restored_a.as_deref(), Some(content.as_str()));
-    assert!(governed.revoke(&lease_a).await, "profile A lease should revoke");
+    assert!(
+        governed.revoke(&lease_a).await,
+        "profile A lease should revoke"
+    );
     let revoked_a: Option<String> = proxy
         .call(
             "Retrieve",
@@ -400,10 +422,26 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         )
         .await
         .unwrap();
-    assert_eq!(revoked_a, None, "revoked durable-only CCR must not fall back");
-    assert!(proxy.call::<()>(methods::RECORD_SAVINGS, (tinyjuice_bus::savings::RecordSavingsRequest {
-        model: "revoked-a".into(), compressor: "generic".into(), original_tokens: 200, compacted_tokens: 100, input_per_mtok_usd: None,
-    },)).await.is_err(), "revoked document writes must be reported as failed");
+    assert_eq!(
+        revoked_a, None,
+        "revoked durable-only CCR must not fall back"
+    );
+    assert!(
+        proxy
+            .call::<()>(
+                methods::RECORD_SAVINGS,
+                (tinyjuice_bus::savings::RecordSavingsRequest {
+                    model: "revoked-a".into(),
+                    compressor: "generic".into(),
+                    original_tokens: 200,
+                    compacted_tokens: 100,
+                    input_per_mtok_usd: None,
+                },)
+            )
+            .await
+            .is_err(),
+        "revoked document writes must be reported as failed"
+    );
 
     modules
         .reinitialize(
@@ -426,22 +464,24 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
     assert_eq!(b_savings.total.tokens_saved, 300);
 
     // A revoked descriptor cannot replace the live B service or retarget it.
-    assert!(modules
-        .reinitialize(
-            &loaded.name,
-            serde_json::json!({"storage_descriptor": descriptor_a}),
-        )
-        .await
-        .is_err());
+    assert!(
+        modules
+            .reinitialize(
+                &loaded.name,
+                serde_json::json!({"storage_descriptor": descriptor_a}),
+            )
+            .await
+            .is_err()
+    );
     let live_b: Option<String> = proxy
-        .call(
-            "Retrieve",
-            (token_b, Option::<serde_json::Value>::None),
-        )
+        .call("Retrieve", (token_b, Option::<serde_json::Value>::None))
         .await
         .unwrap();
     assert_eq!(live_b.as_deref(), Some(content_b.as_str()));
-    assert!(governed.revoke(&lease_b).await, "profile B lease should revoke");
+    assert!(
+        governed.revoke(&lease_b).await,
+        "profile B lease should revoke"
+    );
     governed.shutdown().await.unwrap();
     broker_task.abort();
 }

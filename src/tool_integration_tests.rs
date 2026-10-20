@@ -427,15 +427,13 @@ async fn injected_compaction_keeps_summary_and_ccr_state_with_its_owner() {
     let second_store = MemoryCcrStore::default();
     let first_state = SummaryState::default();
     let second_state = SummaryState::default();
-    let first_generate: Arc<crate::llm::GenerateCallback> = Arc::new(|_| {
-        Box::pin(async { Ok(Some("first owner's summary".to_owned())) })
-    });
-    let second_generate: Arc<crate::llm::GenerateCallback> = Arc::new(|_| {
-        Box::pin(async { Ok(Some("second owner's summary".to_owned())) })
-    });
+    let first_generate: Arc<crate::llm::GenerateCallback> =
+        Arc::new(|_| Box::pin(async { Ok(Some("first owner's summary".to_owned())) }));
+    let second_generate: Arc<crate::llm::GenerateCallback> =
+        Arc::new(|_| Box::pin(async { Ok(Some("second owner's summary".to_owned())) }));
     let content = "same stored source content ".repeat(40);
     let mut first_call = call(&content, AgentTokenjuiceCompression::Full, Some("source"));
-    first_call.scope = Some("same-scope" );
+    first_call.scope = Some("same-scope");
     let first = compact_tool_output_with_context(
         first_call,
         &options,

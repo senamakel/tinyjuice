@@ -30,9 +30,9 @@ mod test;
 mod test_stats;
 
 use crate::cache::store::CcrStore;
-use std::sync::Arc;
 use crate::llm::GenerateCallback;
 use crate::summarize::SummaryState;
+use std::sync::Arc;
 pub use types::{
     ExtractKind, FindMode, Heading, Hit, Link, RegexMatch, ReplError, ReplLimits, ReplOp,
     ReplOutput, ScopeUnit, SearchHit,

@@ -41,12 +41,12 @@ pub(crate) async fn bind(
 ) -> tinybus::Result<Option<StorageBinding>> {
     match descriptor {
         Some(descriptor) => {
-            let transport = tinystoragedrivers_busproxy::BusTransport::connect_bound(
-                connection,
-                descriptor,
-            )
-            .await
-            .map_err(|_| tinybus::Error::failed("configured storage descriptor unavailable"))?;
+            let transport =
+                tinystoragedrivers_busproxy::BusTransport::connect_bound(connection, descriptor)
+                    .await
+                    .map_err(|_| {
+                        tinybus::Error::failed("configured storage descriptor unavailable")
+                    })?;
             let bus = tinystoragedrivers_client::BusStorage::connect(
                 Arc::new(transport),
                 tinystoragedrivers_busproxy::module_scope_label(),
@@ -79,12 +79,7 @@ impl InstanceCcrStore {
         }
     }
 
-    pub(crate) fn configure(
-        &self,
-        max_entries: usize,
-        max_bytes: usize,
-        ttl: Option<Duration>,
-    ) {
+    pub(crate) fn configure(&self, max_entries: usize, max_bytes: usize, ttl: Option<Duration>) {
         self.memory.configure(max_entries, max_bytes, ttl);
     }
 
