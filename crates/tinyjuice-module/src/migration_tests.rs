@@ -1,5 +1,8 @@
 use super::*;
-use tinystoragedrivers_core::schema::{BlobTargetRequest, DocumentsTransformRequest, SourceRecord};
+use tinystoragedrivers_core::schema::{
+    BlobTargetRequest, DocumentsTransformRequest, SourceRecord, StreamEntriesRequest,
+    StreamPlanRequest,
+};
 
 fn handler() -> CcrMigrationHandler {
     CcrMigrationHandler {
@@ -59,4 +62,30 @@ fn ccr_export_rejects_other_transform_families() {
         panic!("document transforms are not declared by TinyJuice's CCR schema");
     };
     assert_eq!(error.kind, TransformErrorKind::UnsupportedOperation);
+
+    let reply = handler().transform(MigrationPayload::StreamPlan(StreamPlanRequest {
+        operation: CCR_PREFIX_OPERATION.into(),
+        version: CCR_PREFIX_OPERATION_VERSION,
+        source: "legacy-streams/".into(),
+    }));
+    assert!(matches!(
+        reply,
+        MigrationPayloadReply::StreamPlan(Err(TransformError {
+            kind: TransformErrorKind::UnsupportedOperation,
+            ..
+        }))
+    ));
+
+    let reply = handler().transform(MigrationPayload::StreamEntries(StreamEntriesRequest {
+        operation: CCR_PREFIX_OPERATION.into(),
+        version: CCR_PREFIX_OPERATION_VERSION,
+        entries: Vec::new(),
+    }));
+    assert!(matches!(
+        reply,
+        MigrationPayloadReply::StreamEntries(Err(TransformError {
+            kind: TransformErrorKind::UnsupportedOperation,
+            ..
+        }))
+    ));
 }
