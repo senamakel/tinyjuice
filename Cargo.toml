@@ -30,7 +30,7 @@ resolver = "3"
 # Pure hosts consume the storage schema without enabling its optional TinyBus
 # compatibility client. Keep this revision aligned with the TinyJuice bus
 # contract and its isolated, locked consumer proof.
-tinystoragedrivers-bus = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "7354214b8834b71bb0acb4a7c93b3efa051001b8", default-features = false }
+tinystoragedrivers-bus = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "d8ebef1a98df3918ed3b80719fdc1414ee20f7a4", default-features = false }
 
 [dependencies]
 # Optional adapter boundary: REPL ops as `tinytools::Tool` impls.
