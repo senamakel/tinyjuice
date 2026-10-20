@@ -54,14 +54,15 @@ impl Compression {
             },
             generate_callback,
         );
-        let savings = storage
-            .as_ref()
-            .map_or_else(crate::savings_store::Savings::new, |storage| {
+        let savings = storage.as_ref().filter(|_| require_storage).map_or_else(
+            crate::savings_store::Savings::new,
+            |storage| {
                 crate::savings_store::Savings::with_documents(
                     Arc::clone(&storage.documents),
                     require_storage,
                 )
-            });
+            },
+        );
         Self {
             state: Arc::new(CompressionState {
                 savings,
@@ -113,27 +114,33 @@ impl Compression {
     pub(crate) async fn install(&self, request: InstallRequest) -> BusResult<()> {
         let ttl = request.ccr_ttl_secs.map(std::time::Duration::from_secs);
         let durable = if request.ccr_durable {
-            match self.state.storage.as_ref() {
-                Some(storage) => {
-                    match crate::storage::durable_tier_on(Arc::clone(&storage.blobs), ttl).await {
-                        Ok(durable) => Some(durable),
-                        Err(error) if self.state.require_storage => {
-                            log::warn!(
-                                "[tinyjuice_module] configured CCR store unavailable: {error}"
-                            );
-                            return Err(tinybus::Error::failed(
-                                "configured CCR storage unavailable",
-                            ));
-                        }
-                        Err(error) => {
-                            log::warn!(
-                                "[tinyjuice_module] ccr store on host storage unavailable: {error}"
-                            );
-                            None
+            if self.state.require_storage {
+                match self.state.storage.as_ref() {
+                    Some(storage) => {
+                        match crate::storage::durable_tier_on(Arc::clone(&storage.blobs), ttl).await
+                        {
+                            Ok(durable) => Some(durable),
+                            Err(error) => {
+                                log::warn!(
+                                    "[tinyjuice_module] configured CCR store unavailable: {error}"
+                                );
+                                return Err(tinybus::Error::failed(
+                                    "configured CCR storage unavailable",
+                                ));
+                            }
                         }
                     }
+                    None => {
+                        return Err(tinybus::Error::failed("configured CCR storage unavailable"));
+                    }
                 }
-                None => None,
+            } else {
+                match self.state.connection.as_ref() {
+                    Some(connection) => {
+                        crate::storage::legacy_durable_tier(connection.clone(), ttl).await
+                    }
+                    None => None,
+                }
             }
         } else {
             None

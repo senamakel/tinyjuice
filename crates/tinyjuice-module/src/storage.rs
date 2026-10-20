@@ -32,9 +32,10 @@ impl StorageBinding {
 
 /// Resolve the host storage supplied for one module setup.
 ///
-/// A descriptor is an authority-bearing route: failure is returned to setup
-/// and never falls back to the compatibility endpoint. `None` alone uses the
-/// legacy route, which remains best-effort for older hosts.
+/// A descriptor selects a host-authorized route; peer identity and the live
+/// registry grant authorize access. Failure is returned to setup and never
+/// falls back to the compatibility endpoint. `None` alone uses the legacy
+/// route, which remains best-effort for older hosts.
 pub(crate) async fn bind(
     connection: Connection,
     descriptor: Option<tinystoragedrivers_busproxy::governed::StorageDescriptor>,
@@ -185,6 +186,23 @@ pub(crate) async fn durable_tier_on(
         .map_err(|error| error.to_string())?;
     log::debug!("[tinyjuice_module] ccr durable tier on bound host blobs ttl={ttl:?}");
     Ok(Arc::new(OffWorker(opened)))
+}
+
+/// Resolve the compatibility endpoint again for an explicit legacy Install.
+/// This lets a host that starts or restarts after module setup provide its
+/// current storage ports without retaining a stale endpoint binding.
+pub(crate) async fn legacy_durable_tier(
+    connection: Connection,
+    ttl: Option<Duration>,
+) -> Option<Arc<dyn CcrStore>> {
+    let binding = bind(connection, None).await.ok().flatten()?;
+    match durable_tier_on(binding.blobs, ttl).await {
+        Ok(store) => Some(store),
+        Err(error) => {
+            log::warn!("[tinyjuice_module] ccr store on host storage unavailable: {error}");
+            None
+        }
+    }
 }
 
 /// The CCR durable tier on `blobs`, or `None` when the store cannot be built
