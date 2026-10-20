@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
 """Fail closed unless the isolated consumer resolves the exact data-only bus."""
 import json
+from pathlib import Path
 import sys
+import tomllib
+
+
+ROOT = Path(__file__).resolve().parent.parent
+WORKSPACE_VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["version"]
+CONSUMER_MANIFEST = tomllib.loads(
+    (ROOT / "tests/storage-needs-consumer/Cargo.toml").read_text()
+)
 
 
 SOURCE = (
     "git+https://github.com/tinyhumansai/tinystoragedrivers"
-    "?rev=c9ea6ff1615b77b55d7269403af5fd11bedc9ce8"
-    "#c9ea6ff1615b77b55d7269403af5fd11bedc9ce8"
+    "?rev=595723e1b1cabeb3d36f0c5b6ff2e11b458e7558"
+    "#595723e1b1cabeb3d36f0c5b6ff2e11b458e7558"
 )
-REV = "c9ea6ff1615b77b55d7269403af5fd11bedc9ce8"
+REV = "595723e1b1cabeb3d36f0c5b6ff2e11b458e7558"
 DEPENDENCY_SOURCE = (
     "git+https://github.com/tinyhumansai/tinystoragedrivers"
     f"?rev={REV}"
 )
-PACKAGE_ID = f"{DEPENDENCY_SOURCE}#tinystoragedrivers-bus@1.5.0"
+PACKAGE_ID = f"{DEPENDENCY_SOURCE}#tinystoragedrivers-bus@1.8.0"
 
 
 def fail(message: str) -> None:
@@ -22,6 +31,8 @@ def fail(message: str) -> None:
 
 
 def main() -> None:
+    if CONSUMER_MANIFEST["dependencies"]["tinyjuice-bus"]["version"] != WORKSPACE_VERSION:
+        fail("the isolated consumer must pin the current TinyJuice bus contract version")
     try:
         metadata = json.load(sys.stdin)
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
@@ -40,6 +51,10 @@ def main() -> None:
     if root is None or root.get("name") != "tinyjuice-storage-needs-consumer":
         fail("the isolated consumer root package is missing")
 
+    bus_packages = [package for package in packages if package.get("name") == "tinyjuice-bus"]
+    if len(bus_packages) != 1 or bus_packages[0].get("version") != WORKSPACE_VERSION:
+        fail("the resolved TinyJuice bus contract version does not match the workspace release")
+
     direct = [dependency for dependency in root.get("dependencies", [])
               if dependency.get("name") == "tinystoragedrivers-bus"]
     if len(direct) != 1:
@@ -48,8 +63,8 @@ def main() -> None:
     source = dependency.get("source") or ""
     if source not in (DEPENDENCY_SOURCE, SOURCE):
         fail("the direct dependency does not pin the canonical source by the expected revision")
-    if dependency.get("req") != "=1.5.0":
-        fail("the direct dependency must require exactly tinystoragedrivers-bus 1.5.0")
+    if dependency.get("req") != "=1.8.0":
+        fail("the direct dependency must require exactly tinystoragedrivers-bus 1.8.0")
     if dependency.get("uses_default_features") is not False:
         fail("the direct dependency must disable default features")
     if dependency.get("features") != [] or dependency.get("optional") is not False:
@@ -62,9 +77,9 @@ def main() -> None:
     if len(matches) != 1:
         fail("Cargo metadata must resolve exactly one storage bus package")
     package = matches[0]
-    if (package.get("version") != "1.5.0" or package.get("source") != SOURCE
+    if (package.get("version") != "1.8.0" or package.get("source") != SOURCE
             or package.get("id") != PACKAGE_ID):
-        fail("the resolved storage bus package did not match the canonical 1.5.0 source SHA")
+        fail("the resolved storage bus package did not match the pinned v1.8.0 source SHA")
 
     nodes = resolve.get("nodes")
     if not isinstance(nodes, list):

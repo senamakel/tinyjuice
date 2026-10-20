@@ -15,8 +15,8 @@ if [[ -z "$host_target" ]]; then
 fi
 metadata="$(cargo metadata --locked --manifest-path "$manifest" --filter-platform "$host_target" --format-version 1)"
 normal_graph="$(cargo tree --locked --manifest-path "$manifest" --target "$host_target" --edges normal,build --prefix none)"
-if ! grep -Eq '^tinystoragedrivers-bus v1\.5\.0([[:space:]]|$)' <<<"$normal_graph"; then
-  echo "TinyJuice bus-only consumer is missing tinystoragedrivers-bus 1.5.0 from its normal/build graph" >&2
+if ! grep -Eq '^tinystoragedrivers-bus v1\.8\.0([[:space:]]|$)' <<<"$normal_graph"; then
+  echo "TinyJuice bus-only consumer is missing tinystoragedrivers-bus 1.8.0 from its normal/build graph" >&2
   exit 1
 fi
 while IFS= read -r entry; do
@@ -41,8 +41,8 @@ done <<<"$normal_graph"
 python3 scripts/check-storage-needs-metadata.py "$normal_graph" <<<"$metadata"
 
 feature_graph="$(cargo tree --locked --manifest-path "$manifest" --target "$host_target" --edges features --invert tinystoragedrivers-bus)"
-if ! grep -Fq 'tinystoragedrivers-bus v1.5.0' <<<"$feature_graph"; then
-  echo "TinyJuice bus-only consumer feature graph is missing tinystoragedrivers-bus 1.5.0" >&2
+if ! grep -Fq 'tinystoragedrivers-bus v1.8.0' <<<"$feature_graph"; then
+  echo "TinyJuice bus-only consumer feature graph is missing tinystoragedrivers-bus 1.8.0" >&2
   exit 1
 fi
 if grep -Fq 'tinystoragedrivers-bus feature "client"' <<<"$feature_graph"; then

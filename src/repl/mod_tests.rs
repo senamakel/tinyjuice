@@ -508,7 +508,6 @@ fn handle_view_body_never_exceeds_the_preview_budget() {
             crate::types::ContentKind::PlainText,
             4.0,
             budget,
-            None,
         );
         // The budget bounds the preview; the stats line and head snippet are extra.
         let fixed = stats.chars().count() + stats::HEAD_CHARS + 64;
@@ -616,7 +615,6 @@ fn handle_footer_names_a_slice_read_first_and_still_round_trips() {
         crate::types::ContentKind::PlainText,
         4.0,
         200,
-        None,
     );
     assert!(footer.contains("handle \"abc123\""), "{footer}");
     let find = footer.find("juice_find").expect("names juice_find");

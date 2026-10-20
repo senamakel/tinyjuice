@@ -11,7 +11,7 @@ use crate::types::{AgentTokenjuiceCompression, CompressOptions};
 
 /// The one-shot configuration a host installs before its first compression.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", from = "InstallRequestWire")]
 pub struct InstallRequest {
     /// Router and compressor knobs, built by the host from its own config.
     pub options: CompressOptions,
@@ -22,10 +22,57 @@ pub struct InstallRequest {
     /// How long a retrievable original stays retrievable. `None` keeps the
     /// module's own default.
     pub ccr_ttl_secs: Option<u64>,
-    /// Whether originals outlive memory. `Some` puts them on the host's storage
-    /// bus (the path itself is no longer written to); `None` keeps the cache in
-    /// memory only.
-    pub disk_tier_root: Option<String>,
+    /// Whether originals outlive memory through the host's durable CCR store.
+    #[serde(default)]
+    pub ccr_durable: bool,
+}
+
+/// Deserialization-only shape that rejects the retired host-supplied path.
+/// Unknown fields remain forward-compatible; only `diskTierRoot` is refused.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallRequestWire {
+    options: CompressOptions,
+    max_cache_entries: usize,
+    max_cache_bytes: usize,
+    ccr_ttl_secs: Option<u64>,
+    #[serde(default)]
+    ccr_durable: bool,
+    #[serde(
+        default,
+        rename = "diskTierRoot",
+        deserialize_with = "reject_retired_disk_tier_root"
+    )]
+    retired_disk_tier_root: (),
+}
+
+impl From<InstallRequestWire> for InstallRequest {
+    fn from(wire: InstallRequestWire) -> Self {
+        let InstallRequestWire {
+            options,
+            max_cache_entries,
+            max_cache_bytes,
+            ccr_ttl_secs,
+            ccr_durable,
+            retired_disk_tier_root: (),
+        } = wire;
+        Self {
+            options,
+            max_cache_entries,
+            max_cache_bytes,
+            ccr_ttl_secs,
+            ccr_durable,
+        }
+    }
+}
+
+fn reject_retired_disk_tier_root<'de, D>(_: D) -> Result<(), D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Err(serde::de::Error::custom(
+        "`diskTierRoot` is not supported by TinyJuice contract 3.0",
+    ))
 }
 
 /// What `CompactWith` takes: `Compact`'s positional arguments plus the
@@ -217,3 +264,7 @@ pub enum HtmlError {
 
 /// Markdown or a structured extraction error.
 pub type HtmlResponse = Result<String, HtmlError>;
+
+#[cfg(test)]
+#[path = "wire_tests.rs"]
+mod tests;

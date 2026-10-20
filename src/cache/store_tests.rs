@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(feature = "cli-disk-tier")]
+use crate::cache::{disable_disk_tier, enable_disk_tier};
 
 #[test]
 fn round_trips() {
@@ -138,25 +140,22 @@ fn memory_store_rejects_oversized_originals() {
 }
 
 #[test]
-fn memory_store_rejects_malformed_tokens_before_disk_lookup() {
-    let dir = std::env::temp_dir().join(format!(
-        "tj-memory-ccr-{}",
-        short_hash("memory-store-malformed-token")
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    let store = MemoryCcrStore::new(10, 10_000).with_disk_root(dir.clone());
+fn memory_store_rejects_malformed_tokens() {
+    let store = MemoryCcrStore::new(10, 10_000);
 
     assert_eq!(store.get("../../state/config.toml"), None);
     assert_eq!(
         store.get_range("../../state/config.toml", 0, 1, RangeUnit::Lines),
         None
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
+#[cfg(feature = "cli-disk-tier")]
 fn disk_tier_survives_memory_miss() {
+    let _guard = crate::cache::DISK_TIER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let dir = std::env::temp_dir().join(format!("tj-ccr-{}", short_hash("disk-test-seed")));
     let _ = std::fs::remove_dir_all(&dir);
     enable_disk_tier(dir.clone());
@@ -173,7 +172,7 @@ fn disk_tier_survives_memory_miss() {
         "disk fallback"
     );
     // Disable the tier for other tests and clean up.
-    *disk_root().write().unwrap() = None;
+    disable_disk_tier();
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -185,172 +184,6 @@ fn offload_with_hash_round_trips() {
     assert_eq!(retrieve(&hash).as_deref(), Some(original.as_str()));
     // Matches the hashing path exactly.
     assert_eq!(offload_checked(&original).0, hash);
-}
-
-/// Write a token-named file with a back-dated mtime.
-fn write_aged(dir: &Path, name: &str, bytes: usize, age: Duration) -> PathBuf {
-    let path = dir.join(name);
-    std::fs::write(&path, "x".repeat(bytes)).unwrap();
-    let file = std::fs::File::options().write(true).open(&path).unwrap();
-    file.set_modified(SystemTime::now() - age).unwrap();
-    path
-}
-
-fn token(fill: char) -> String {
-    fill.to_string().repeat(32)
-}
-
-#[test]
-fn gc_removes_expired_keeps_fresh() {
-    let dir = tempfile::tempdir().unwrap();
-    let old = write_aged(dir.path(), &token('a'), 10, Duration::from_secs(600));
-    let fresh = write_aged(dir.path(), &token('b'), 20, Duration::ZERO);
-
-    let stats = gc_disk_dir(dir.path(), Some(Duration::from_secs(60)), None).unwrap();
-    assert_eq!(stats.removed, 1);
-    assert_eq!(stats.freed_bytes, 10);
-    assert_eq!(stats.kept, 1);
-    assert_eq!(stats.kept_bytes, 20);
-    assert!(!old.exists());
-    assert!(fresh.exists());
-}
-
-#[test]
-fn gc_evicts_oldest_over_budget() {
-    let dir = tempfile::tempdir().unwrap();
-    let oldest = write_aged(dir.path(), &token('a'), 100, Duration::from_secs(30));
-    let middle = write_aged(dir.path(), &token('b'), 100, Duration::from_secs(20));
-    let newest = write_aged(dir.path(), &token('c'), 100, Duration::from_secs(10));
-
-    let stats = gc_disk_dir(dir.path(), None, Some(250)).unwrap();
-    assert_eq!(stats.removed, 1, "one eviction brings 300 under 250");
-    assert_eq!(stats.freed_bytes, 100);
-    assert_eq!(stats.kept, 2);
-    assert!(!oldest.exists(), "oldest-by-mtime goes first");
-    assert!(middle.exists());
-    assert!(newest.exists());
-}
-
-#[test]
-fn gc_ignores_non_token_files_and_missing_dir() {
-    let dir = tempfile::tempdir().unwrap();
-    let stray = dir.path().join("README.txt");
-    std::fs::write(&stray, "not a ccr entry").unwrap();
-
-    let stats = gc_disk_dir(dir.path(), Some(Duration::ZERO), Some(0)).unwrap();
-    assert_eq!(stats, GcStats::default());
-    assert!(stray.exists(), "non-token files are never touched");
-
-    let missing = dir.path().join("does-not-exist");
-    assert_eq!(
-        gc_disk_dir(&missing, None, None).unwrap(),
-        GcStats::default()
-    );
-}
-
-#[test]
-fn gc_protects_named_entry_from_budget_eviction() {
-    let dir = tempfile::tempdir().unwrap();
-    let protected_name = token('a');
-    let protected = write_aged(dir.path(), &protected_name, 100, Duration::from_secs(30));
-    let newer = write_aged(dir.path(), &token('b'), 100, Duration::from_secs(10));
-
-    let stats = gc_dir_protecting(dir.path(), None, Some(150), Some(&protected_name)).unwrap();
-    assert!(
-        protected.exists(),
-        "protected entry survives even when oldest"
-    );
-    assert!(!newer.exists(), "eviction falls through to the next-oldest");
-    assert_eq!(stats.removed, 1);
-    assert_eq!(stats.kept, 1);
-}
-
-#[test]
-fn disk_entry_ttl_uses_file_mtime() {
-    let dir = std::env::temp_dir().join(format!("tj-ccr-ttl-{}", short_hash("disk-ttl")));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    std::fs::write(&path, "disk ttl payload").unwrap();
-
-    assert!(!disk_entry_expired(&path, None));
-    assert!(!disk_entry_expired(&path, Some(Duration::from_secs(60))));
-    assert!(disk_entry_expired(&path, Some(Duration::ZERO)));
-
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn isolated_store_disk_survives_memory_eviction_and_validates_tokens() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = MemoryCcrStore::new(1, 8).with_disk_root(dir.path().to_owned());
-    let result = store.put("larger than memory capacity");
-    assert!(result.retained());
-    assert_eq!(store.stats(), (0, 0));
-    assert_eq!(
-        store.get(result.token()).as_deref(),
-        Some("larger than memory capacity")
-    );
-    assert_eq!(
-        store
-            .get_range(result.token(), 0, 6, RangeUnit::Bytes)
-            .as_deref(),
-        Some("larger")
-    );
-    assert_eq!(store.get("../escape"), None);
-    assert_eq!(
-        store.get_range(&"0".repeat(32), 0, 1, RangeUnit::Lines),
-        None
-    );
-}
-
-#[test]
-fn isolated_store_ttl_expires_memory_and_disk_and_updates_bytes() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = MemoryCcrStore::default()
-        .with_ttl(Some(Duration::ZERO))
-        .with_disk_root(dir.path().to_owned());
-    let result = store.put("expired payload");
-    assert!(result.retained());
-    assert_eq!(store.stats(), (1, 15));
-    assert_eq!(store.get(result.token()), None);
-    assert_eq!(store.stats(), (0, 0));
-    assert!(!dir.path().join(result.token()).exists());
-}
-
-#[test]
-fn isolated_store_disk_setup_and_write_failures_do_not_claim_retention() {
-    let dir = tempfile::tempdir().unwrap();
-    let blocked = dir.path().join("file");
-    std::fs::write(&blocked, "block").unwrap();
-    let store = MemoryCcrStore::new(1, 1).with_disk_root(blocked);
-    assert!(!store.put("too large").retained());
-    let root = dir.path().join("disk");
-    let store = MemoryCcrStore::new(1, 1).with_disk_root(root.clone());
-    std::fs::remove_dir(&root).unwrap();
-    assert!(!store.put("too large").retained());
-}
-
-#[test]
-fn garbage_collection_skips_nonentries_and_protects_inflight_original() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("notes"), "unrelated").unwrap();
-    std::fs::create_dir(dir.path().join("a".repeat(32))).unwrap();
-    let protected = short_hash("protected");
-    std::fs::write(dir.path().join(&protected), "protected").unwrap();
-    let removed = short_hash("removed");
-    std::fs::write(dir.path().join(&removed), "removed").unwrap();
-    let stats = gc_dir_protecting(dir.path(), None, Some(0), Some(&protected)).unwrap();
-    assert_eq!(stats.removed, 1);
-    assert_eq!(stats.kept, 1);
-    assert_eq!(stats.kept_bytes, 9);
-    assert!(dir.path().join(&protected).exists());
-    assert!(dir.path().join("notes").exists());
-    assert_eq!(
-        gc_disk_dir(&dir.path().join("absent"), None, None).unwrap(),
-        GcStats::default()
-    );
-    assert!(gc_disk_dir(&dir.path().join("notes"), None, None).is_err());
 }
 
 #[test]
@@ -395,11 +228,6 @@ fn global_adapter_supports_ranges_and_unconfigured_disk_gc() {
         Some("second")
     );
     assert!(stats().0 > 0);
-    assert!(gc_disk_tier(None, None).is_ok());
-    assert!(!disk_entry_expired(
-        &PathBuf::from("/nonexistent-tinyjuice-fixture"),
-        Some(Duration::ZERO)
-    ));
 }
 
 #[test]

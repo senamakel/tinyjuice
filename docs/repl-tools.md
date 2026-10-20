@@ -30,10 +30,8 @@ compressors and the LLM summary (`cache::recovery_footer_with`) say
 footer offering only `juice_retrieve` fetched whole originals every time; with
 the slice read named first it can take the part it needs.
 
-Set `repl_save_dir` to also write the full original to `<dir>/<handle>.txt`
-(mode 0600, written once per handle). The path is in the footer and in
-`CompressedOutput.saved_path`, so an agent can grep or script over the file.
-The host owns cleanup of that directory.
+The complete original remains available through the CCR handle and its retrieval
+tools. REPL mode does not write a second plain-text copy to a filesystem path.
 
 ## Ops
 

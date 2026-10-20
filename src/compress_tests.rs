@@ -33,6 +33,120 @@ async fn routes_json_and_offloads() {
 }
 
 #[tokio::test]
+async fn detected_kind_routes_to_its_compressor_and_lossy_output_is_recoverable() {
+    use crate::cache::CcrStore;
+    use crate::types::ContentKind;
+
+    let mut options = opts();
+    options.ccr_min_tokens = 1;
+    let store = cache::MemoryCcrStore::new(16, 1_000_000);
+    let cases = [
+        (
+            ContentKind::Json,
+            format!(
+                "[{}]",
+                (0..160)
+                    .map(|i| format!(r#"{{"id":{i},"name":"account_{i}","status":"active"}}"#))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        ),
+        (
+            ContentKind::Code,
+            format!(
+                "pub fn visible() {{\n{}\n}}\n",
+                (0..40)
+                    .map(|i| format!("    println!(\"account {i}\");"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+        ),
+        (
+            ContentKind::Log,
+            (0..120)
+                .map(|i| format!("ERROR worker-{i} failed request with retryable timeout after repeated attempts\n"))
+                .collect::<String>(),
+        ),
+        (
+            ContentKind::Search,
+            (0..120)
+                .map(|i| format!("src/module.rs:{}:fn matching_result_{i}() {{}}\n", i + 1))
+                .collect::<String>(),
+        ),
+        (
+            ContentKind::Diff,
+            format!(
+                "diff --git a/Cargo.lock b/Cargo.lock\n@@ -1,300 +1,300 @@\n{}",
+                (0..300)
+                    .map(|i| format!("+ dependency_{i} = \"{}.{}.{}\"\n", i % 4, i % 20, i))
+                    .collect::<String>()
+            ),
+        ),
+        (
+            ContentKind::Html,
+            format!(
+                "<!doctype html><html><body>{}</body></html>",
+                (0..120)
+                    .map(|i| format!("<section><h2>Result {i}</h2><p>Repeated page content for item {i}</p></section>"))
+                    .collect::<String>()
+            ),
+        ),
+        (
+            ContentKind::PlainText,
+            format!(
+                "{}ERROR sync.worker.v2 failed for REQUEST_ID 9F42 after retry 17.\n{}",
+                (0..80)
+                    .map(|i| format!("Routine update {i}: the worker completed another ordinary queue item successfully.\n"))
+                    .collect::<String>(),
+                (80..160)
+                    .map(|i| format!("Routine update {i}: the worker completed another ordinary queue item successfully.\n"))
+                    .collect::<String>()
+            ),
+        ),
+    ];
+
+    for (expected_kind, content) in cases {
+        let hint = ContentHint {
+            extension: (expected_kind == ContentKind::Code).then(|| "rs".to_string()),
+            query: match expected_kind {
+                ContentKind::Search => Some("matching_result".to_string()),
+                ContentKind::PlainText => Some("sync.worker.v2 REQUEST_ID".to_string()),
+                _ => None,
+            },
+            ..Default::default()
+        };
+        let detected = detect_content_kind(&content, &hint);
+        assert_eq!(detected, expected_kind, "fixture for {expected_kind:?}");
+
+        let output = compress_content_with_store(&content, Some(hint), &options, &store).await;
+        assert_eq!(
+            output.content_kind, detected,
+            "compress route for {expected_kind:?}"
+        );
+        assert!(
+            output.applied,
+            "fixture should exercise {expected_kind:?} compression"
+        );
+        assert_eq!(
+            output.compressor,
+            compressor_for(detected).kind(),
+            "compressor route for {expected_kind:?}"
+        );
+        if output.lossy {
+            let token = output
+                .ccr_token
+                .as_deref()
+                .expect("lossy output retains CCR token");
+            assert_eq!(
+                store.get(token).as_deref(),
+                Some(content.as_str()),
+                "lossy output for {expected_kind:?} must recover every original byte"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn diff_noise_output_offloads_original_for_recovery() {
     let mut original = String::from("diff --git a/Cargo.lock b/Cargo.lock\n");
     original.push_str("@@ -1,800 +1,900 @@\n");
@@ -575,8 +689,9 @@ async fn code_is_not_cut_without_ccr() {
 async fn code_collapses_with_ccr() {
     let o = opts();
     assert!(o.ccr_enabled);
+    let store = cache::MemoryCcrStore::default();
     let original = big_code_file();
-    let res = compress_content(&original, Some(code_hint()), &o).await;
+    let res = compress_content_with_store(&original, Some(code_hint()), &o, &store).await;
     assert_eq!(res.content_kind, ContentKind::Code);
     assert!(res.applied, "CCR makes the collapse recoverable");
     assert!(res.text.len() < original.len());
@@ -588,7 +703,7 @@ async fn code_collapses_with_ccr() {
         "recoverable tokens present: {}",
         res.text
     );
-    let body = cache::retrieve(&tokens[0]).expect("stored");
+    let body = store.get(&tokens[0]).expect("stored");
     assert!(body.contains("tmp_0_15"), "full body recoverable: {body}");
 }
 

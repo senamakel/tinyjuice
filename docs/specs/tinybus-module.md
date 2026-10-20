@@ -26,8 +26,9 @@ in-process bus.
 ## Wire shapes
 
 All object fields use camelCase. `Install` accepts one object with `options`,
-`maxCacheEntries`, `maxCacheBytes`, and the optional `ccrTtlSecs` and
-`diskTierRoot`. `options` is a `CompressOptions` object; omitted option fields
+`maxCacheEntries`, `maxCacheBytes`, `ccrDurable`, and optional `ccrTtlSecs`.
+`ccrDurable` tells the module to use the host-provided durable CCR store;
+it never names a filesystem path. `options` is a `CompressOptions` object; omitted option fields
 take their defaults, so a future knob does not break an older host.
 
 `Compress` accepts `(content, hint)`. The hint fields `mime`, `extension`,
@@ -112,18 +113,24 @@ matching lines before allocating remaining context slots. An explicit summary
 
 ## Model-attributed savings (contract 2.1)
 
-The module owns aggregation and best-effort JSON snapshot persistence. Hosts
+The module owns aggregation and persistence. Since contract 2.3 the totals are
+one document, `juice.savings/totals` (snake_case body, `updated_ms`), in the
+module's scope of the host's storage; a host that serves no storage keeps them
+in memory. Hosts
 link only `tinyjuice-bus::savings` and call these members:
 
-- `ConfigureSavings(snapshot_path: String) -> ()` loads the snapshot once per
-  path. Repeating the same path preserves current in-memory totals.
+- `ConfigureSavings(snapshot_path: String) -> ()` is a deprecated no-op since
+  2.3 (there is no snapshot file).
+- `ImportSavings(SavingsAggregate) -> bool` (2.3) adopts a legacy camelCase
+  snapshot the host read from its old file, only while nothing has been
+  recorded; `false` means totals already existed and nothing changed.
 - `RecordSavings(RecordSavingsRequest) -> ()` records a positive token saving.
   The host supplies the attribution model, compressor identifier, pre/post
   token estimates, and its catalog lookup of the input price per million
   tokens. `None` records token savings with zero estimated dollar savings.
 - `SavingsStats() -> SavingsAggregate` returns total, model, and compressor
   breakdowns in the existing camelCase dashboard/snapshot format.
-- `ResetSavings() -> ()` clears the totals and persists an empty snapshot.
+- `ResetSavings() -> ()` clears the totals, in memory and in storage.
 
 The ledger does not call a hosted pricing service or depend on a host cost
 catalog. A pricing callback remains host-owned; its result crosses the bus in
@@ -133,7 +140,8 @@ at `u64::MAX` and `f64::MAX`, respectively.
 Counts are estimates, not provider-measured usage. The `SavingsRecord` event
 callback surface remains available separately for richer accounting.
 
-The snapshot path is trusted host configuration, like the cache disk root.
-Missing or malformed snapshots retain the current totals, matching the former
-OpenHuman ledger. Switching paths does not create an isolated per-user ledger;
-hosts requiring that isolation must use separate module instances or reset.
+Totals are stored per module scope: a host that wants a ledger per user binds
+the module's storage scope per user (or uses separate module instances). A
+legacy snapshot file is read by the host and handed over once with
+`ImportSavings`; a malformed file is the host's to skip, matching the former
+OpenHuman ledger.

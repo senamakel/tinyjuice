@@ -390,41 +390,6 @@ fn cap(mut out: ReplOutput, limits: &ReplLimits) -> ReplOutput {
 /// Tool names advertised in the handle footer.
 pub const TOOL_NAMES: &[&str] = &["juice_find", "juice_extract", "juice_summarize"];
 
-/// Write the full original to `<dir>/<token>.txt` (0600, atomic, idempotent) so an
-/// agent can scrape it with its own program. Best-effort: `None` on any failure.
-pub fn write_handle_file(
-    dir: &std::path::Path,
-    token: &str,
-    content: &str,
-) -> Option<std::path::PathBuf> {
-    if token.is_empty() || !token.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return None;
-    }
-    std::fs::create_dir_all(dir).ok()?;
-    let path = dir.join(format!("{token}.txt"));
-    if path.is_file() {
-        return Some(path);
-    }
-    let tmp = dir.join(format!(".{token}.{}.tmp", std::process::id()));
-    let write = || -> std::io::Result<()> {
-        use std::io::Write;
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        opts.open(&tmp)?.write_all(content.as_bytes())?;
-        std::fs::rename(&tmp, &path)
-    };
-    if write().is_err() {
-        let _ = std::fs::remove_file(&tmp);
-        return None;
-    }
-    Some(path)
-}
-
 /// Stats line, head snippet, preview and footer for a stored original. The footer
 /// keeps the `juice_retrieve ... token "<hash>"` form so marker parsing still
 /// finds the handle. Returns `(body, footer, stats)`; the body starts with the stats line.
@@ -434,7 +399,6 @@ pub fn handle_view(
     kind: crate::types::ContentKind,
     chars_per_token: f32,
     preview_chars: usize,
-    file: Option<&std::path::Path>,
 ) -> (String, String, String) {
     let stats = stats::describe(content, kind, chars_per_token);
     let mut preview = ops::summarize(content, preview_chars, &ReplLimits::default());
@@ -448,16 +412,13 @@ pub fn handle_view(
         stats::HEAD_CHARS,
         stats::head(content),
     );
-    let file_note = file
-        .map(|p| format!(" Plain-text copy for scripts: {}.", p.display()))
-        .unwrap_or_default();
     // Same wording as `recovery_footer_with`'s REPL form: a slice read and a
     // search first, the whole original last.
     let footer = format!(
         "\n\n[full output is stored, not shown — handle \"{token}\". Read lines with \
          juice_find (mode \"sed\", query \"-n 120,200p\") or search with mode \"grep\"; \
          outline with juice_summarize. {} with token \"{token}\" returns the whole \
-         original.{file_note}]",
+         original.]",
         crate::cache::marker::RETRIEVE_TOOL_NAME,
     );
     (body, footer, stats)

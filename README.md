@@ -222,25 +222,25 @@ tool-output adapter leaves the output unchanged and reports
 Install the CLI:
 
 ```sh
-cargo install tinyjuice --locked
+cargo install tinyjuice --features cli-disk-tier --locked
 ```
 
 Run the minimal reducer CLI:
 
 ```sh
-cargo run --bin tinyjuice-reduce -- reduce --tool-name bash --command "git status" status.txt
-cargo run --bin tinyjuice-reduce -- reduce-json payload.json
-cargo run --bin tinyjuice-reduce -- verify --rules --fixtures
-cargo run --bin tinyjuice-reduce -- discover executions.ndjson
-cargo run --bin tinyjuice-reduce -- wrap -- cargo test
-cargo run --bin tinyjuice-reduce -- ls --store-dir .tokenjuice/ccr
-cargo run --bin tinyjuice-reduce -- cat --store-dir .tokenjuice/ccr <token>
-cargo run --bin tinyjuice-reduce -- stats --store-dir .tokenjuice/ccr
-cargo run --bin tinyjuice-reduce -- doctor --store-dir .tokenjuice/ccr
-cargo run --bin tinyjuice-reduce -- doctor codex
-cargo run --bin tinyjuice-reduce -- doctor hooks
-cargo run --bin tinyjuice-reduce -- install codex --local target/debug/tinyjuice
-cargo run --bin tinyjuice-reduce -- uninstall codex
+cargo run --features cli-disk-tier --bin tinyjuice-reduce -- reduce --tool-name bash --command "git status" status.txt
+cargo run --features cli-disk-tier --bin tinyjuice-reduce -- reduce-json payload.json
+cargo run --features cli-disk-tier --bin tinyjuice-reduce -- verify --rules --fixtures
+cargo run --features cli-disk-tier --bin tinyjuice-reduce -- discover executions.ndjson
+cargo run --features cli-disk-tier --bin tinyjuice-reduce -- wrap -- cargo test
+cargo run --features cli-disk-tier --bin tinyjuice-reduce -- ls --store-dir .tokenjuice/ccr
+cargo run --features cli-disk-tier --bin tinyjuice-reduce -- cat --store-dir .tokenjuice/ccr <token>
+cargo run --features cli-disk-tier --bin tinyjuice-reduce -- stats --store-dir .tokenjuice/ccr
+cargo run --features cli-disk-tier --bin tinyjuice-reduce -- doctor --store-dir .tokenjuice/ccr
+cargo run --features cli-disk-tier --bin tinyjuice-reduce -- doctor codex
+cargo run --features cli-disk-tier --bin tinyjuice-reduce -- doctor hooks
+cargo run --features cli-disk-tier --bin tinyjuice-reduce -- install codex --local target/debug/tinyjuice
+cargo run --features cli-disk-tier --bin tinyjuice-reduce -- uninstall codex
 ```
 
 Run hot-path benchmarks:
@@ -272,9 +272,19 @@ helpers still use the process-global `GlobalCcrStore` for compatibility. New
 tests and host adapters can use `MemoryCcrStore` to assert CCR behavior without
 touching the global cache.
 
-The CLI `ls`, `cat`, and `stats` commands operate only on an explicit CCR disk
-tier via `--store-dir`; they do not imply access to another process's in-memory
-cache. `cat` supports `--lines START:END` and `--bytes START:END` ranges.
+The standalone CLI's `ls`, `cat`, `stats`, and `gc` commands are compiled with
+the opt-in `cli-disk-tier` feature; `ls`, `cat`, and `stats` can inspect an
+explicit directory with `--store-dir`. `gc` and normal CLI or hook compression
+runs use `TINYJUICE_CCR_DIR`, falling back to the platform cache directory.
+Library and hosted module builds do not contain this tier. It is a disposable
+recovery cache, not durable user data. Hosted persistence is owned by the host's
+BlobCcrStore. Existing standalone cache files are not imported into hosted
+storage. The REPL's former `repl_save_dir` text snapshots are no longer written;
+the CCR token and its configured store are authoritative. TinyBus contract 3.0
+rejects 2.x hosts because the old disk-path request cannot express host
+durability. These commands do not imply access to another process's in-memory
+cache. `cat` supports
+`--lines START:END` and `--bytes START:END` ranges.
 `stats` reports metadata-only counts and byte totals without reading token
 content.
 

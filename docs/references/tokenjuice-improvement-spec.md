@@ -26,7 +26,7 @@ OpenHuman-specific behavior that upstream does not have:
 
 - content-aware router for JSON, HTML, code, logs, search output, diffs, command
   output, and optional ML text compression
-- CCR recovery markers and a bounded memory/disk store for reversible lossy
+- CCR recovery markers and bounded memory/host storage for reversible lossy
   compaction
 - per-agent compression profiles (`auto`, `full`, `light`, `off`)
 - OpenHuman-facing tool-output APIs and startup configuration hooks

@@ -1,7 +1,10 @@
 //! The `TinyJuice` `TinyBus` contract version and its binding rule.
 
 /// The wire contract version this crate defines.
-pub const CONTRACT_VERSION: (u32, u32) = (2, 2);
+/// Version 3 removes the host-provided disk path and replaces it with an
+/// explicit host-durability capability. Version 2 hosts must be rejected so
+/// their old `diskTierRoot` request cannot silently lose its persistence.
+pub const CONTRACT_VERSION: (u32, u32) = (3, 0);
 
 /// Returns whether a host using [`CONTRACT_VERSION`] can bind to `module`.
 ///

@@ -191,7 +191,6 @@ min_tokens = 1024
 max_entries = 256
 max_bytes = 67108864
 ttl_secs = 86400
-disk_tier = true
 
 [tokenjuice.compressors]
 search = true
@@ -200,6 +199,10 @@ html = true
 json = true
 ml_text = false
 ```
+
+The standalone CLI's optional filesystem cache is not a host configuration
+setting. Hosts provide durability through their own CCR store; `tinyjuice-module`
+uses the host blob-storage port.
 
 Host mappings:
 
@@ -217,7 +220,7 @@ in CCR.
 Requirements:
 
 - recovery token format is fixed and validated
-- retrieval first checks memory, then optional disk tier
+- retrieval checks memory, then the host-provided durable CCR store
 - disk paths are never derived from unvalidated user text
 - recovery tool output is never compacted again
 - adapters expose retrieval as a normal host tool where supported

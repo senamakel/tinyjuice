@@ -665,7 +665,7 @@ fn read_input(path: Option<&str>) -> Result<String, String> {
 
 /// Default CCR entry TTL for CLI/hook invocations: 7 days. Hook processes are
 /// fresh per tool call, so without a finite TTL nothing ever expires and the
-/// disk tier grows without bound; `tinyjuice gc` (and the amortized write-time
+/// CLI disk tier grows without bound; `tinyjuice gc` (and the amortized write-time
 /// sweep) prune against this.
 const DEFAULT_CLI_CCR_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 

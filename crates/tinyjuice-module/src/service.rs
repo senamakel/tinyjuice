@@ -35,14 +35,11 @@ impl Compression {
             request.max_cache_entries,
             request.max_cache_bytes,
             request.ccr_ttl_secs,
-            // The module writes no files: the durable tier is the host's blob
-            // port, never a directory the host names.
-            None,
         );
-        // `disk_tier_root` is the host's "keep originals past memory" switch.
-        // Off clears the durable tier; on moves it onto the host's storage.
-        let durable = match (request.disk_tier_root, self.connection.clone()) {
-            (Some(_), Some(connection)) => {
+        // Durable CCR is backed by host storage. The module never receives or
+        // writes a filesystem path for its cache.
+        let durable = match (request.ccr_durable, self.connection.clone()) {
+            (true, Some(connection)) => {
                 crate::storage::durable_tier(
                     connection,
                     request.ccr_ttl_secs.map(std::time::Duration::from_secs),
@@ -190,9 +187,9 @@ impl Compression {
         Ok(CacheStats { entries, bytes })
     }
 
-    /// Select and restore the module-owned savings snapshot once per path.
-    async fn configure_savings(&self, snapshot_path: String) -> BusResult<()> {
-        savings_ledger().configure(std::path::Path::new(&snapshot_path));
+    /// Deprecated no-op (contract 2.3): savings live in the host's document
+    /// store, so there is no snapshot path to select.
+    async fn configure_savings(&self, _snapshot_path: String) -> BusResult<()> {
         Ok(())
     }
 
@@ -201,19 +198,27 @@ impl Compression {
         &self,
         request: tinyjuice_bus::savings::RecordSavingsRequest,
     ) -> BusResult<()> {
-        savings_ledger().record(&request);
+        savings().record(self.connection.as_ref(), &request).await;
         Ok(())
     }
 
     /// Return a consistent copy of the module-owned savings totals.
     async fn savings_stats(&self) -> BusResult<tinyjuice_bus::savings::SavingsAggregate> {
-        Ok(savings_ledger().stats())
+        Ok(savings().stats(self.connection.as_ref()).await)
     }
 
-    /// Clear module-owned savings and persist the empty snapshot.
+    /// Clear module-owned savings, in memory and in storage.
     async fn reset_savings(&self) -> BusResult<()> {
-        savings_ledger().reset();
+        savings().reset(self.connection.as_ref()).await;
         Ok(())
+    }
+
+    /// Adopt a legacy snapshot when nothing was recorded yet.
+    async fn import_savings(
+        &self,
+        legacy: tinyjuice_bus::savings::SavingsAggregate,
+    ) -> BusResult<bool> {
+        savings().import(self.connection.as_ref(), legacy).await
     }
 }
 
@@ -334,7 +339,8 @@ pub(crate) mod exports {
             "ConfigureSavings",
             "RecordSavings",
             "SavingsStats",
-            "ResetSavings"
+            "ResetSavings",
+            "ImportSavings"
         ],
         signals = [],
         requires = [],
@@ -347,9 +353,8 @@ pub(crate) mod exports {
 #[path = "service_tests.rs"]
 mod tests;
 
-/// One ledger per loaded module, shared by its compression service calls.
-fn savings_ledger() -> &'static tinyjuice::savings::ledger::SavingsLedger {
-    static LEDGER: std::sync::OnceLock<tinyjuice::savings::ledger::SavingsLedger> =
-        std::sync::OnceLock::new();
-    LEDGER.get_or_init(tinyjuice::savings::ledger::SavingsLedger::new)
+/// One savings ledger per loaded module, shared by its service calls.
+fn savings() -> &'static crate::savings_store::Savings {
+    static SAVINGS: std::sync::OnceLock<crate::savings_store::Savings> = std::sync::OnceLock::new();
+    SAVINGS.get_or_init(crate::savings_store::Savings::new)
 }

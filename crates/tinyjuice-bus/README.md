@@ -15,16 +15,26 @@ The values here are **moved out of** the `tinyjuice` library rather than copied
 from it: `tinyjuice::types` re-exports them, so there is one definition of each
 and a host is looking at the same bytes the module validates against.
 
-`STORAGE_NEEDS` is TinyJuice's canonical host-grant metadata. Its CCR blob
-prefix includes the trailing slash (`tinyjuice_ccr/`), matching the existing
-`tinyjuice_ccr/<token>` keys while excluding sibling prefixes such as
-`tinyjuice_ccr_backup/`. Hosts can consume this declaration instead of
-restating its resources.
+`STORAGE_NEEDS` is TinyJuice's data-only host-grant metadata. It declares the
+`juice.savings` collection and `juice/ccr/` blob prefix from the same canonical
+names used by the executable schema in `tinyjuice-drivers`. This crate keeps
+only those names, the serialized DTOs, and the static needs declaration. Its
+empty `storage` feature remains for compatibility and adds no TSD core
+dependency. The legacy `tinyjuice_ccr/` prefix remains a migration source; it
+is not granted to the module after migration.
+
+The released TSD v1.8.0 runner reads a source blob and its absolute expiry
+together, then writes the transformed blob with that same deadline. The
+`BlobOutput` callback remains `(key, content type, bytes)`; expiry preservation
+belongs to the runner, not the TinyJuice transform. The bus contract stays
+data-only and pins source commit `595723e1b1cabeb3d36f0c5b6ff2e11b458e7558`.
+That v1.8.0 source was released from the `senamakel/tinystoragedrivers` fork;
+Cargo retains the canonical repository URL and resolves the immutable commit.
 
 The isolated consumer under `tests/storage-needs-consumer/` directly pins the
-same canonical `tinystoragedrivers-bus` 1.5.0 revision as the workspace. Its
-return type names that crate directly, so compilation proves the re-export is
-the same Rust type; its test checks all four resource fields. The locked
+same canonical-URL `tinystoragedrivers-bus` v1.8.0 source revision as the
+workspace. Its return type names that crate directly, so compilation proves
+the re-export is the same Rust type; its test checks all four resource fields. The locked
 consumer also proves the resolved source and that a host needing only this
 contract does not acquire TinyBus or enable the optional storage client.
 When changing the TinyJuice workspace version or storage-bus revision, refresh
@@ -48,3 +58,13 @@ See [the module specification](../../docs/specs/tinybus-module.md) for request
 examples, operation tags/defaults, reply shapes, and the fixed input/output
 ceilings. HTML extraction returns `Result<String, HtmlError>` so input-size
 rejections remain distinct from transport failures.
+
+
+Contract 3.0 replaces the host-supplied `diskTierRoot` install setting with an
+explicit `ccrDurable` capability. Host adapters must verify contract
+compatibility with `is_compatible` before exposing this module or sending its
+`Install` request; the module cannot infer the caller's contract version from
+that request. As a second boundary, deserialization rejects any `diskTierRoot`
+field, including `null`, rather than silently ignoring an old persistence
+request. Unrelated unknown fields remain forward-compatible, and an omitted
+`ccrDurable` still defaults to `false`.
