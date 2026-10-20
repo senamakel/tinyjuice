@@ -19,6 +19,10 @@ SOURCE = (
     "git+https://github.com/tinyhumansai/tinystoragedrivers"
     f"?rev={REV}#{REV}"
 )
+DEPENDENCY_SOURCE = (
+    "git+https://github.com/tinyhumansai/tinystoragedrivers"
+    f"?rev={REV}"
+)
 # Cargo package IDs use the opaque identity after the source's single '#'; the
 # resolved commit belongs in package.source, not as another package-ID fragment.
 PACKAGE_ID = (
@@ -36,7 +40,7 @@ def package_id_for(source):
     return f"{source_spec}#tinystoragedrivers-bus@{TSD_BUS_VERSION}"
 
 
-def storage_bus_dependency(*, source=SOURCE, kind=None, default_features=False):
+def storage_bus_dependency(*, source=DEPENDENCY_SOURCE, kind=None, default_features=False):
     return {
         "name": "tinystoragedrivers-bus",
         "source": source,
@@ -101,7 +105,7 @@ def metadata_fixture(*, source=SOURCE, dependency_source=None, kind=None,
                 "uses_default_features": True,
                 "features": [],
             },
-            storage_bus_dependency(source=dependency_source or SOURCE, kind=kind,
+            storage_bus_dependency(source=dependency_source or DEPENDENCY_SOURCE, kind=kind,
                                    default_features=default_features),
         ],
     }
@@ -204,7 +208,7 @@ class StorageNeedsGuardTests(unittest.TestCase):
         for section, name in (
             ("dependencies", "tinystoragedrivers-core"),
             ("dependencies", "tinystoragedrivers-busproxy"),
-            ("dev-dependencies", "tinystoragedrivers-client"),
+            ("dependencies", "tinystoragedrivers-client"),
         ):
             actual = module_manifest[section][name]
             self.assertEqual({key: actual[key] for key in runtime_pin}, runtime_pin)
