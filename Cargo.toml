@@ -143,6 +143,7 @@ required-features = ["tinytools"]
 # vendored checkout so the module and the storage proxy share one `Connection`.
 [patch."https://github.com/tinyhumansai/tinybus"]
 tinybus = { path = "vendor/tinybus/crates/tinybus" }
+tinybus-module = { path = "vendor/tinybus/crates/tinybus-module" }
 
 # The TinyBus transport and macros use this checkout; the module SDK is pinned
 # directly to the same published Git revision as the TSD adapter.
