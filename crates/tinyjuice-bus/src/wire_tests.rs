@@ -21,9 +21,30 @@ fn install_request_defaults_to_no_host_durable_ccr() {
         "options": {},
         "maxCacheEntries": 8,
         "maxCacheBytes": 1024,
-        "ccrTtlSecs": null
+        "ccrTtlSecs": null,
+        "futureHostOption": "ignored"
     });
 
     let parsed: InstallRequest = serde_json::from_value(request).unwrap();
     assert!(!parsed.ccr_durable);
+}
+
+#[test]
+fn install_request_rejects_retired_disk_tier_root_even_when_null() {
+    for disk_tier_root in [serde_json::json!("/workspace/.tokenjuice/ccr"), serde_json::Value::Null]
+    {
+        let request = serde_json::json!({
+            "options": {},
+            "maxCacheEntries": 8,
+            "maxCacheBytes": 1024,
+            "ccrTtlSecs": null,
+            "ccrDurable": false,
+            "diskTierRoot": disk_tier_root
+        });
+
+        let error = serde_json::from_value::<InstallRequest>(request)
+            .expect_err("a v2 persistence field must not silently disable durable CCR")
+            .to_string();
+        assert!(error.contains("diskTierRoot"), "unexpected error: {error}");
+    }
 }
