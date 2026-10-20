@@ -195,7 +195,9 @@ async fn descriptor_binding_uses_the_granted_blob_and_document_ports() -> TestRe
     let key = format!("{}{}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0], token);
     assert!(scoped.blobs().get(&key).await?.is_some());
     assert!(governed.revoke(&lease).await);
-    let retrieved: Option<String> = proxy.call("Retrieve", (token,)).await?;
+    let retrieved: Option<String> = proxy
+        .call("Retrieve", (token, Option::<serde_json::Value>::None))
+        .await?;
     assert_eq!(retrieved, None, "revoked durable reads fail closed");
 
     governed.shutdown().await?;
