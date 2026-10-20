@@ -84,11 +84,51 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
     wait_until_serving(&client, BUS_NAME, Duration::from_secs(5))
         .await
         .expect("module should become ready");
-    let module_peer: tinybus::BusName = BUS_NAME.parse().expect("module bus name");
+    let module_peer = client
+        .name_owner(BUS_NAME)
+        .await
+        .expect("name lookup should succeed")
+        .expect("ready module should own its name");
     let migration = migration_client_is_selected_and_confidential(&controller, &bus, &module_peer)
         .await
         .expect("selected controller should discover the schema");
     assert_legacy_ccr_migrates_over_the_loaded_module(migration, &modules).await;
+
+    // Attach two current-only governed profiles after the same peer served
+    // GetSchema and migrated its owner CCR data.
+    let governed = support::JuiceStorage::attach(&modules, &controller)
+        .await
+        .expect("governed host storage should attach");
+    let (lease_a, descriptor_a) = governed
+        .lease("juice-profile-a", &module_peer)
+        .await
+        .expect("profile A lease should register for the admitted peer");
+    let (lease_b, descriptor_b) = governed
+        .lease("juice-profile-b", &module_peer)
+        .await
+        .expect("profile B lease should register for the admitted peer");
+    modules
+        .reinitialize(
+            &loaded.name,
+            serde_json::json!({"storage_descriptor": descriptor_a.clone()}),
+        )
+        .await
+        .expect("the module should bind profile A before replacing its service");
+    assert_eq!(
+        client.name_owner(BUS_NAME).await.unwrap(),
+        Some(module_peer.clone()),
+        "reinitialization keeps the admitted module peer stable"
+    );
+    assert_eq!(
+        MigrationModuleClient::discover(&controller, &module_peer)
+            .await
+            .unwrap()
+            .declaration()
+            .owner
+            .as_str(),
+        "juice",
+        "the same peer continues to serve its owner schema"
+    );
 
     let proxy = client
         .proxy(BUS_NAME, OBJECT_PATH, BUS_NAME)
@@ -114,9 +154,9 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
                     "charsPerToken": 4.0
                 },
                 "maxCacheEntries": 8,
-                "maxCacheBytes": 1048576,
-                "ccrTtlSecs": null,
-                "ccrDurable": false
+                "maxCacheBytes": 1,
+                "ccrTtlSecs": 600,
+                "ccrDurable": true
             }),),
         )
         .await
@@ -173,6 +213,24 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         .expect("compress should succeed");
     assert!(output.applied);
     let token = output.ccr_token.expect("compression should be recoverable");
+    let scoped_a = governed
+        .backend
+        .for_scope(&Scope::new("juice-profile-a").unwrap())
+        .unwrap();
+    let token_key = format!("{}{token}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0]);
+    assert_eq!(
+        scoped_a
+            .blobs()
+            .get(&token_key)
+            .await
+            .unwrap()
+            .unwrap()
+            .bytes,
+        content.as_bytes(),
+        "a durable-only CCR original lands in profile A's governed blob scope"
+    );
+    let cache_a: tinyjuice_bus::wire::CacheStats = proxy.call("CacheStats", ()).await.unwrap();
+    assert_eq!(cache_a.entries, 0, "one-byte memory cap makes this durable-only");
     let recovered: Option<String> = proxy
         .call(
             "Retrieve",
