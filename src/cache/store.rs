@@ -119,7 +119,8 @@ impl MemoryCcrStore {
             max_bytes: max_bytes.max(1),
             ttl,
         };
-        *self.limits.write().unwrap_or_else(|p| p.into_inner()) = limits;
+        let mut current_limits = self.limits.write().unwrap_or_else(|p| p.into_inner());
+        *current_limits = limits;
         self.inner
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -141,7 +142,10 @@ impl MemoryCcrStore {
 impl CcrStore for MemoryCcrStore {
     fn put(&self, content: &str) -> CcrPutResult {
         let token = short_hash(content);
-        let limits = *self.limits.read().unwrap_or_else(|p| p.into_inner());
+        // Keep the read guard through insertion. `configure` takes these
+        // locks in the same order and trims while holding the write guard, so
+        // a concurrent put cannot insert using limits that have been replaced.
+        let limits = self.limits.read().unwrap_or_else(|p| p.into_inner());
         let mem_retained = self.inner.lock().unwrap_or_else(|p| p.into_inner()).insert(
             token.clone(),
             content.to_string(),

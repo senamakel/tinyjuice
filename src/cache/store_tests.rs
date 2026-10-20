@@ -35,6 +35,39 @@ fn configuring_one_memory_store_trims_only_that_stores_entries() {
 }
 
 #[test]
+fn concurrent_configure_and_put_preserve_the_final_bounds() {
+    use std::sync::{Arc, Barrier};
+
+    let store = Arc::new(MemoryCcrStore::new(64, 2 * 1024 * 1024));
+    let start = Arc::new(Barrier::new(3));
+    let put_store = Arc::clone(&store);
+    let put_start = Arc::clone(&start);
+    let putter = std::thread::spawn(move || {
+        put_start.wait();
+        for index in 0..128 {
+            put_store.put(&format!("{index}:{}", "x".repeat(32 * 1024)));
+        }
+    });
+    let configure_store = Arc::clone(&store);
+    let configure_start = Arc::clone(&start);
+    let configurator = std::thread::spawn(move || {
+        configure_start.wait();
+        for index in 0..128 {
+            let (entries, bytes) = if index % 2 == 0 { (64, 2 * 1024 * 1024) } else { (2, 64 * 1024) };
+            configure_store.configure(entries, bytes, None);
+        }
+        configure_store.configure(1, 1, None);
+    });
+
+    start.wait();
+    putter.join().unwrap();
+    configurator.join().unwrap();
+
+    let (entries, bytes) = store.stats();
+    assert!(entries <= 1 && bytes <= 1, "final bounds held: {entries} entries, {bytes} bytes");
+}
+
+#[test]
 fn idempotent_hash() {
     let a = offload("ccr idempotent unique payload bravo content");
     let b = offload("ccr idempotent unique payload bravo content");
