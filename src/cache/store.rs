@@ -83,6 +83,11 @@ impl CcrStore for GlobalCcrStore {
 /// Isolated in-memory CCR store for tests and host-managed adapters.
 pub struct MemoryCcrStore {
     inner: Mutex<Inner>,
+    limits: RwLock<MemoryLimits>,
+}
+
+#[derive(Clone, Copy)]
+struct MemoryLimits {
     max_entries: usize,
     max_bytes: usize,
     ttl: Option<Duration>,
@@ -98,14 +103,32 @@ impl MemoryCcrStore {
     pub fn new(max_entries: usize, max_bytes: usize) -> Self {
         Self {
             inner: Mutex::new(Inner::default()),
-            max_entries: max_entries.max(1),
-            max_bytes: max_bytes.max(1),
-            ttl: None,
+            limits: RwLock::new(MemoryLimits {
+                max_entries: max_entries.max(1),
+                max_bytes: max_bytes.max(1),
+                ttl: None,
+            }),
         }
     }
 
-    pub fn with_ttl(mut self, ttl: Option<Duration>) -> Self {
-        self.ttl = ttl;
+    /// Reconfigure this store without discarding entries that still fit.
+    /// Oldest entries are evicted first when the new bounds are smaller.
+    pub fn configure(&self, max_entries: usize, max_bytes: usize, ttl: Option<Duration>) {
+        let limits = MemoryLimits {
+            max_entries: max_entries.max(1),
+            max_bytes: max_bytes.max(1),
+            ttl,
+        };
+        *self.limits.write().unwrap_or_else(|p| p.into_inner()) = limits;
+        self.inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .trim(limits.max_entries, limits.max_bytes);
+    }
+
+    pub fn with_ttl(self, ttl: Option<Duration>) -> Self {
+        let limits = *self.limits.read().unwrap_or_else(|p| p.into_inner());
+        self.configure(limits.max_entries, limits.max_bytes, ttl);
         self
     }
 
@@ -118,11 +141,12 @@ impl MemoryCcrStore {
 impl CcrStore for MemoryCcrStore {
     fn put(&self, content: &str) -> CcrPutResult {
         let token = short_hash(content);
+        let limits = *self.limits.read().unwrap_or_else(|p| p.into_inner());
         let mem_retained = self.inner.lock().unwrap_or_else(|p| p.into_inner()).insert(
             token.clone(),
             content.to_string(),
-            self.max_entries,
-            self.max_bytes,
+            limits.max_entries,
+            limits.max_bytes,
         );
         CcrPutResult::new(token, mem_retained)
     }
@@ -131,10 +155,11 @@ impl CcrStore for MemoryCcrStore {
         if !is_valid_token(token) {
             return None;
         }
+        let ttl = self.limits.read().unwrap_or_else(|p| p.into_inner()).ttl;
         {
             let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
             if let Some(entry) = inner.map.get(token) {
-                if self.ttl.is_none_or(|ttl| entry.created.elapsed() < ttl) {
+                if ttl.is_none_or(|ttl| entry.created.elapsed() < ttl) {
                     return Some(entry.content.clone());
                 }
                 if let Some(entry) = inner.map.remove(token) {
@@ -262,6 +287,18 @@ impl Inner {
             return false;
         }
         self.map.contains_key(&hash)
+    }
+
+    /// Evict oldest entries until current occupancy fits the new limits.
+    fn trim(&mut self, max_entries: usize, max_bytes: usize) {
+        while self.order.len() > max_entries || self.total_bytes > max_bytes {
+            let Some(evicted) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(entry) = self.map.remove(&evicted) {
+                self.total_bytes = self.total_bytes.saturating_sub(entry.content.len());
+            }
+        }
     }
 }
 
