@@ -28,9 +28,9 @@ resolver = "3"
 
 [dependencies]
 # Optional adapter boundary: REPL ops as `tinytools::Tool` impls.
-tinytools = { version = "0.5", git = "https://github.com/tinyhumansai/tinytools", optional = true }
+tinytools = { version = "0.6", git = "https://github.com/tinyhumansai/tinytools", optional = true }
 anyhow = { version = "1", optional = true }
-uuid = { version = "1", features = ["v4"], optional = true }
+uuid = { version = ">=1, <1.27", features = ["v4"], optional = true }
 jaq-core = { version = "3", optional = true }
 jaq-std = { version = "3", optional = true }
 jaq-json = { version = "2", optional = true }
@@ -53,7 +53,7 @@ unicode-segmentation = "1"
 unicode-width = "0.2"
 
 [dependencies.tree-sitter]
-version = "0.27"
+version = "0.26"
 optional = true
 
 [dependencies.tree-sitter-python]
@@ -130,6 +130,11 @@ required-features = ["tinytools"]
 # vendored checkout so the module and the storage proxy share one `Connection`.
 [patch."https://github.com/tinyhumansai/tinybus"]
 tinybus = { path = "vendor/tinybus/crates/tinybus" }
+
+# Use the TinyTools revision pinned by the nested TinyAgents checkout so the
+# optional adapter and harness share one `tinytools::Tool` identity.
+[patch."https://github.com/tinyhumansai/tinytools"]
+tinytools = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 
 # tinybus is not on crates.io; modules name it by version range so a host can
 # unify it, and standalone builds resolve it to the nested checkout.
