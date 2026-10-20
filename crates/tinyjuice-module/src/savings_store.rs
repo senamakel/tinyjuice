@@ -144,9 +144,12 @@ impl Savings {
         }
         let previous = self.ledger.stats();
         self.ledger.replace(legacy);
-        if self.persist(&state).await.is_err() {
-            self.ledger.replace(previous);
-            return Err(tinybus::Error::failed("savings could not be written"));
+        match self.persist(&state).await {
+            Ok(true) => {}
+            Ok(false) | Err(_) => {
+                self.ledger.replace(previous);
+                return Err(tinybus::Error::failed("savings could not be written"));
+            }
         }
         Ok(true)
     }
@@ -211,14 +214,14 @@ impl Savings {
 
     /// Write the ledger. `true` when it is stored, or when there is no
     /// storage to write to; `false` when a write failed.
-    async fn persist(&self, state: &State) -> BusResult<()> {
+    async fn persist(&self, state: &State) -> BusResult<bool> {
         // Nothing is written until the stored document has been read, so an
         // unread older document is never overwritten blindly.
         if !state.loaded {
-            return self.storage_unavailable();
+            return self.storage_unavailable_write(false);
         }
         let Some(docs) = state.docs.as_ref() else {
-            return self.storage_unavailable();
+            return self.storage_unavailable_write(true);
         };
         let body = StoredSavings::from_aggregate(&self.ledger.stats(), now_ms());
         match docs
@@ -230,10 +233,10 @@ impl Savings {
             )
             .await
         {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(true),
             Err(error) => {
                 log::warn!("[tinyjuice_module][savings] write failed: {error}");
-                self.storage_unavailable()
+                self.storage_unavailable_write(false)
             }
         }
     }
@@ -243,6 +246,14 @@ impl Savings {
             Err(tinybus::Error::failed("savings storage unavailable"))
         } else {
             Ok(())
+        }
+    }
+
+    fn storage_unavailable_write(&self, no_storage_to_write: bool) -> BusResult<bool> {
+        if self.require_storage {
+            Err(tinybus::Error::failed("savings storage unavailable"))
+        } else {
+            Ok(no_storage_to_write)
         }
     }
 }
