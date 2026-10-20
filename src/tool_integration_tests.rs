@@ -414,14 +414,16 @@ async fn injected_compaction_keeps_summary_and_ccr_state_with_its_owner() {
     use crate::types::LlmSummaryMode;
     use std::sync::Arc;
 
-    let mut options = CompressOptions::default();
-    options.router_enabled = true;
-    options.ccr_enabled = true;
-    options.llm_summary_enabled = true;
-    options.llm_summary_mode = LlmSummaryMode::Auto;
-    options.llm_summary_threshold_tokens = 10;
-    options.min_bytes_to_compress = 32;
-    options.min_bytes_to_compress_log = 32;
+    let options = CompressOptions {
+        router_enabled: true,
+        ccr_enabled: true,
+        llm_summary_enabled: true,
+        llm_summary_mode: LlmSummaryMode::Auto,
+        llm_summary_threshold_tokens: 10,
+        min_bytes_to_compress: 32,
+        min_bytes_to_compress_log: 32,
+        ..Default::default()
+    };
 
     let first_store = MemoryCcrStore::default();
     let second_store = MemoryCcrStore::default();
