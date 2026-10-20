@@ -22,8 +22,8 @@ tinyjuice = { version = "0.11.0", path = "../..", default-features = false, feat
 # from what a caller was compiled against.
 tinyjuice-bus = { version = "0.11.0", path = "../tinyjuice-bus" }
 serde = { version = "1", features = ["derive"] }
-tinybus = { version = "=0.3.10", git = "https://github.com/tinyhumansai/tinybus", rev = "6b3c5b0cc14b1d07b68055b17a937b11de613efd", default-features = false, features = ["macros", "modules"] }
-tinybus-module = { version = "=0.3.10", git = "https://github.com/tinyhumansai/tinybus", rev = "6b3c5b0cc14b1d07b68055b17a937b11de613efd" }
+tinybus = { version = "=0.3.11", git = "https://github.com/tinyhumansai/tinybus", rev = "9e14f65666b11782ec1054aba576114026d180f8", default-features = false, features = ["macros", "modules"] }
+tinybus-module = { version = "=0.3.11", git = "https://github.com/tinyhumansai/tinybus", rev = "9e14f65666b11782ec1054aba576114026d180f8" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 serde_json = "1"
 # The CCR store's durable tier is blobs on the host's storage ports, reached
@@ -39,7 +39,7 @@ log = "0.4"
 
 [dev-dependencies]
 # Tests serve the storage objects on the in-memory broker the module connects to.
-tinybus = { version = "=0.3.10", git = "https://github.com/tinyhumansai/tinybus", rev = "6b3c5b0cc14b1d07b68055b17a937b11de613efd", default-features = false, features = ["test-support"] }
+tinybus = { version = "=0.3.11", git = "https://github.com/tinyhumansai/tinybus", rev = "9e14f65666b11782ec1054aba576114026d180f8", default-features = false, features = ["test-support"] }
 tempfile = "3"
 async-trait = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
