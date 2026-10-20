@@ -194,6 +194,20 @@ async fn descriptor_binding_uses_the_granted_blob_and_document_ports() -> TestRe
         .unwrap();
     let key = format!("{}{}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0], token);
     assert!(scoped.blobs().get(&key).await?.is_some());
+    let ranged: Option<String> = proxy
+        .call(
+            "Retrieve",
+            (
+                token.clone(),
+                Some(tinyjuice_bus::wire::RetrieveRange {
+                    start: 1,
+                    end: 2,
+                    unit: tinyjuice_bus::wire::RangeUnit::Lines,
+                }),
+            ),
+        )
+        .await?;
+    assert_eq!(ranged.as_deref(), Some("INFO request completed id=1"));
     assert!(governed.revoke(&lease).await);
     let retrieved: Option<String> = proxy
         .call("Retrieve", (token, Option::<serde_json::Value>::None))

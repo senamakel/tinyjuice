@@ -94,7 +94,9 @@ fn ccr_blob_dispatch_refuses_missing_or_non_blob_owner_steps() {
                 2,
                 tinystoragedrivers_core::schema::ScopeClass::Module,
             )
-            .step(Step::new(CCR_PREFIX_STEP, "juice/ccr", 1, 2, |_| Ok(Vec::new()))),
+            .step(Step::new(CCR_PREFIX_STEP, "juice/ccr", 1, 2, |_| {
+                Ok(Vec::new())
+            })),
     };
     assert_eq!(
         documents.blob_target(request).unwrap_err().kind,
@@ -119,7 +121,11 @@ fn ccr_blob_dispatch_accepts_unmatched_sources_as_noops_and_rejects_data_rewrite
             )
             .step(
                 Step::blobs(CCR_PREFIX_STEP, "juice/ccr", 1, 2, |source, _, _| {
-                    Ok(Some(("juice/ccr/token".into(), Some("text/plain".into()), source.into_bytes())))
+                    Ok(Some((
+                        "juice/ccr/token".into(),
+                        Some("text/plain".into()),
+                        source.into_bytes(),
+                    )))
                 })
                 .source_prefix("tinyjuice_ccr/"),
             ),
