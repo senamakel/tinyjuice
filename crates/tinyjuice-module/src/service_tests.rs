@@ -53,6 +53,79 @@ async fn service_compresses_and_retrieves_a_large_log() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn compression_services_keep_durable_ccr_in_their_own_storage() {
+    use crate::storage::tests::rig;
+    use tinystoragedrivers_core::{Scope, StorageBackend};
+
+    let _install = crate::storage::tests::INSTALL.lock().await;
+    let first = rig(true).await.unwrap();
+    let second = rig(true).await.unwrap();
+    let first_service = Compression {
+        connection: Some(first.module.clone()),
+    };
+    let second_service = Compression {
+        connection: Some(second.module.clone()),
+    };
+    let install = || InstallRequest {
+        options: CompressOptions {
+            min_bytes_to_compress: 64,
+            ccr_min_tokens: 16,
+            ..CompressOptions::default()
+        },
+        // Force this test's original to rely on its selected durable store.
+        max_cache_entries: 1,
+        max_cache_bytes: 1,
+        ccr_ttl_secs: Some(600),
+        ccr_durable: true,
+    };
+    first_service.install(install()).await.unwrap();
+    second_service.install(install()).await.unwrap();
+
+    let content = (0..200)
+        .map(|index| {
+            if index == 137 {
+                format!("ERROR request failed id={index}\n")
+            } else {
+                format!("INFO request completed id={index}\n")
+            }
+        })
+        .collect::<String>();
+    let result = first_service
+        .compress(
+            content.clone(),
+            ContentHint {
+                explicit: Some(tinyjuice::types::ContentKind::Log),
+                ..ContentHint::default()
+            },
+        )
+        .await
+        .unwrap();
+    let token = result.ccr_token.expect("durable storage should retain the original");
+    let key = format!("{}{}", tinyjuice_bus::STORAGE_NEEDS.blob_prefixes[0], token);
+
+    let first_blobs = first
+        .backend
+        .for_scope(&Scope::local())
+        .unwrap()
+        .blobs();
+    let second_blobs = second
+        .backend
+        .for_scope(&Scope::local())
+        .unwrap()
+        .blobs();
+    assert_eq!(
+        first_blobs.get(&key).await.unwrap().map(|blob| blob.bytes),
+        Some(content.into_bytes()),
+        "the first service must write the original to its own storage"
+    );
+    assert!(
+        second_blobs.get(&key).await.unwrap().is_none(),
+        "a second service must not receive another instance's CCR original"
+    );
+    tinyjuice::cache::set_durable_tier(None);
+}
+
 #[tokio::test]
 async fn service_repl_greps_a_stored_output_and_reports_bad_input() {
     let service = Compression::default();
