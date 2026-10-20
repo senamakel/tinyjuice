@@ -452,10 +452,12 @@ fn cache_key(scope: &str, tool: &str, focus: Option<&str>, raw: &str) -> CacheKe
     hasher.finalize().into()
 }
 
+#[cfg(test)]
 fn cached_summary(key: &CacheKey) -> Option<String> {
     SummaryState::global().cached_summary(key)
 }
 
+#[cfg(test)]
 fn remember_summary(key: CacheKey, summary: String) {
     SummaryState::global().remember_summary(key, summary);
 }
@@ -469,14 +471,17 @@ struct Breakers {
     order: VecDeque<String>,
 }
 
+#[cfg(test)]
 fn breaker_tripped(scope: &str) -> bool {
     SummaryState::global().breaker_tripped(scope)
 }
 
+#[cfg(test)]
 fn record_failure(scope: &str) {
     SummaryState::global().record_failure(scope)
 }
 
+#[cfg(test)]
 fn record_success(scope: &str) {
     SummaryState::global().record_success(scope)
 }
