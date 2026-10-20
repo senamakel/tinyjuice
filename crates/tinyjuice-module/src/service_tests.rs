@@ -1,6 +1,31 @@
 use super::*;
 use tinyjuice::types::CompressOptions;
 
+#[test]
+fn setup_config_accepts_legacy_empty_forms_and_a_typed_storage_descriptor() {
+    assert!(ModuleSetupConfig::Null(()) .storage_descriptor().is_none());
+    assert!(serde_json::from_value::<ModuleSetupConfig>(serde_json::json!({}))
+        .unwrap()
+        .storage_descriptor()
+        .is_none());
+    let configured = serde_json::from_value::<ModuleSetupConfig>(serde_json::json!({
+        "storage_descriptor": {
+            "service_peer": ":1.23",
+            "registration_id": 4,
+            "object_root": "/org/tinystoragedrivers/Storage/Leases/4"
+        }
+    }))
+    .unwrap()
+    .storage_descriptor()
+    .unwrap();
+    assert_eq!(configured.service_peer(), ":1.23");
+    assert_eq!(configured.object_root(), "/org/tinystoragedrivers/Storage/Leases/4");
+    assert!(serde_json::from_value::<ModuleSetupConfig>(serde_json::json!({
+        "storage_descriptor": { "unknown": true }
+    }))
+    .is_err());
+}
+
 #[tokio::test]
 async fn service_compresses_and_retrieves_a_large_log() {
     // `install` reconfigures process-global cache state.
@@ -127,6 +152,83 @@ async fn compression_services_keep_durable_ccr_in_their_own_storage() {
         "a second service must not receive another instance's CCR original"
     );
     tinyjuice::cache::set_durable_tier(None);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn compression_services_keep_savings_in_their_own_documents() {
+    use crate::storage::tests::rig;
+    use tinystoragedrivers_core::{Scope, StorageBackend};
+    use tinyjuice_bus::savings::RecordSavingsRequest;
+
+    let first = rig(true).await.unwrap();
+    let second = rig(true).await.unwrap();
+    let first_storage = crate::storage::bind(first.module.clone(), None)
+        .await
+        .unwrap()
+        .unwrap();
+    let second_storage = crate::storage::bind(second.module.clone(), None)
+        .await
+        .unwrap()
+        .unwrap();
+    let first_service = Compression::new(Some(first.module.clone()), Some(first_storage), false);
+    let second_service = Compression::new(Some(second.module.clone()), Some(second_storage), false);
+
+    first_service
+        .record_savings(RecordSavingsRequest {
+            model: "profile-a".into(),
+            compressor: "generic".into(),
+            original_tokens: 200,
+            compacted_tokens: 100,
+            input_per_mtok_usd: None,
+        })
+        .await
+        .unwrap();
+    second_service
+        .record_savings(RecordSavingsRequest {
+            model: "profile-b".into(),
+            compressor: "generic".into(),
+            original_tokens: 500,
+            compacted_tokens: 200,
+            input_per_mtok_usd: None,
+        })
+        .await
+        .unwrap();
+
+    let first_stats = first_service.savings_stats().await.unwrap();
+    let second_stats = second_service.savings_stats().await.unwrap();
+    assert_eq!(first_stats.total.tokens_saved, 100);
+    assert_eq!(second_stats.total.tokens_saved, 300);
+    assert!(first_stats.by_model.contains_key("profile-a"));
+    assert!(!first_stats.by_model.contains_key("profile-b"));
+    assert!(second_stats.by_model.contains_key("profile-b"));
+    assert!(!second_stats.by_model.contains_key("profile-a"));
+
+    let first_doc = first
+        .backend
+        .for_scope(&Scope::local())
+        .unwrap()
+        .documents()
+        .get(
+            tinyjuice_bus::storage::SAVINGS_COLLECTION,
+            tinyjuice_bus::savings::SAVINGS_DOC_ID,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let second_doc = second
+        .backend
+        .for_scope(&Scope::local())
+        .unwrap()
+        .documents()
+        .get(
+            tinyjuice_bus::storage::SAVINGS_COLLECTION,
+            tinyjuice_bus::savings::SAVINGS_DOC_ID,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first_doc.doc["total"]["tokens_saved"], 100);
+    assert_eq!(second_doc.doc["total"]["tokens_saved"], 300);
 }
 
 #[tokio::test]

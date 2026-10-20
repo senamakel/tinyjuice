@@ -95,6 +95,29 @@ async fn without_a_storage_host_there_is_no_durable_tier() -> TestResult {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unavailable_descriptor_does_not_fall_back_to_a_live_legacy_storage_endpoint() -> TestResult
+{
+    let rig = rig(true).await?;
+    let descriptor: tinystoragedrivers_busproxy::governed::StorageDescriptor =
+        serde_json::from_value(serde_json::json!({
+            "service_peer": ":1.999",
+            "registration_id": 7,
+            "object_root": "/org/tinystoragedrivers/Storage/Leases/7"
+        }))?;
+    assert!(
+        tinystoragedrivers_busproxy::connect_storage(rig.module.clone())
+            .await
+            .is_ok(),
+        "the compatibility endpoint is available in this fixture"
+    );
+    assert!(
+        bind(rig.module.clone(), Some(descriptor)).await.is_err(),
+        "a missing descriptor owner must fail instead of using the compatibility endpoint"
+    );
+    Ok(())
+}
+
 /// The module has two workers at most; a store call made directly from async
 /// code must not wait on a bus reply only that worker could deliver.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
