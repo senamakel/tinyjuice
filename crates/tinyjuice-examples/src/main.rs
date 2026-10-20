@@ -18,8 +18,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use tinyagents_harness::runtime::AgentHarness;
 use tinyagents_harness::host::FixedModelResolver;
+use tinyagents_harness::runtime::AgentHarness;
 use tinyinference_llm::message::Message;
 use tinyinference_llm::providers::openai::OpenAiModel;
 use tinyjuice::repl::{ReplLimits, tools::repl_tools};
@@ -121,14 +121,14 @@ async fn main() -> anyhow::Result<()> {
                     ),
                 )));
                 harness.register_tool(Arc::new(tools::PayloadTool {
-                        name: scenario.tool,
-                        description: scenario.tool_description,
-                        payload: payload.clone(),
-                        arm,
-                        question: scenario.question,
-                        run_id: format!("{}-{}-{rep}", scenario.name, arm.name()),
-                        compaction_ms: compaction_ms.clone(),
-                    }));
+                    name: scenario.tool,
+                    description: scenario.tool_description,
+                    payload: payload.clone(),
+                    arm,
+                    question: scenario.question,
+                    run_id: format!("{}-{}-{rep}", scenario.name, arm.name()),
+                    compaction_ms: compaction_ms.clone(),
+                }));
                 if arm != Arm::Raw {
                     let store = Arc::new(tinyjuice::cache::GlobalCcrStore);
                     for tool in repl_tools(store, ReplLimits::default()) {
