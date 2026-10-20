@@ -261,11 +261,11 @@ else:
                                    "tinyjuice-storage-needs-consumer v0.1.0\n"
                                    f"tinyjuice-bus v{CONTRACT_VERSION} (/tinyjuice/crates/tinyjuice-bus)\n"
                                    "serde v1.0.228 (registry)\n"
-                                   "tinystoragedrivers-bus v1.8.0 (canonical source)\n",
+                                   f"tinystoragedrivers-bus v{TSD_BUS_VERSION} (canonical source)\n",
                                    encoding="utf-8")
             feature_path = temp / "features.txt"
             feature_path.write_text(feature_graph if feature_graph is not None else
-                                    "tinystoragedrivers-bus v1.8.0 (canonical source)\n",
+                                    f"tinystoragedrivers-bus v{TSD_BUS_VERSION} (canonical source)\n",
                                     encoding="utf-8")
             env = dict(os.environ)
             env.update({
@@ -280,6 +280,20 @@ else:
     def test_exact_canonical_direct_normal_dependency_passes(self):
         result = self.run_guard(metadata_fixture())
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_historical_1_8_storage_bus_graph_fails_closed(self):
+        result = self.run_guard(
+            metadata_fixture(),
+            normal_graph=(
+                "tinyjuice-storage-needs-consumer v0.1.0\n"
+                f"tinyjuice-bus v{CONTRACT_VERSION} (/tinyjuice/crates/tinyjuice-bus)\n"
+                "serde v1.0.228 (registry)\n"
+                "tinystoragedrivers-bus v1.8.0 (historical source)\n"
+            ),
+            feature_graph="tinystoragedrivers-bus v1.8.0 (historical source)\n",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"missing tinystoragedrivers-bus {TSD_BUS_VERSION}", result.stderr)
 
     def test_missing_resolved_package_fails_closed(self):
         result = self.run_guard(metadata_fixture(include_package=False))
@@ -363,7 +377,10 @@ else:
         self.assertIn("unexpected feature", result.stderr)
         result = self.run_guard(
             metadata_fixture(),
-            feature_graph='tinystoragedrivers-bus v1.8.0\ntinystoragedrivers-bus feature "client"\n',
+            feature_graph=(
+                f'tinystoragedrivers-bus v{TSD_BUS_VERSION}\n'
+                'tinystoragedrivers-bus feature "client"\n'
+            ),
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("optional storage TinyBus client", result.stderr)
@@ -385,7 +402,7 @@ else:
                 "tinyjuice-storage-needs-consumer v0.1.0\n"
                 f"tinyjuice-bus v{CONTRACT_VERSION} (/tinyjuice/crates/tinyjuice-bus)\n"
                 "serde v1.0.228 (registry)\n"
-                "tinystoragedrivers-bus v1.8.0\ntinybus v0.3.3\n"
+                f"tinystoragedrivers-bus v{TSD_BUS_VERSION}\ntinybus v{TINYBUS_VERSION}\n"
             ),
         )
         self.assertNotEqual(result.returncode, 0)
