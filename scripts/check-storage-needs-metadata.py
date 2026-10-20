@@ -60,7 +60,7 @@ def main() -> None:
         fail("the isolated consumer must directly declare exactly one storage bus dependency")
     dependency = direct[0]
     source = dependency.get("source") or ""
-    if source != SOURCE:
+    if source != DEPENDENCY_SOURCE:
         fail("the direct dependency does not pin the canonical source by the expected revision")
     if dependency.get("req") != "=1.9.0":
         fail("the direct dependency must require exactly tinystoragedrivers-bus 1.9.0")
