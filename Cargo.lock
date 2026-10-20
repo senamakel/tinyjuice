@@ -1557,7 +1557,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "tinybus"
-version = "0.3.8"
+version = "0.3.10"
 dependencies = [
  "async-trait",
  "flate2",
@@ -1608,7 +1608,7 @@ dependencies = [
 
 [[package]]
 name = "tinybus-macros"
-version = "0.3.8"
+version = "0.3.10"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1617,8 +1617,7 @@ dependencies = [
 
 [[package]]
 name = "tinybus-module"
-version = "0.3.8"
-source = "git+https://github.com/tinyhumansai/tinybus?rev=5e3c882c46b84fe319b38332123dd8acc3cd826e#5e3c882c46b84fe319b38332123dd8acc3cd826e"
+version = "0.3.10"
 dependencies = [
  "async-trait",
  "serde",
@@ -1679,7 +1678,7 @@ dependencies = [
  "log",
  "tinyjuice",
  "tinyjuice-bus",
- "tinystoragedrivers-core",
+ "tinystoragedrivers-core 1.9.0 (git+https://github.com/tinyhumansai/tinystoragedrivers?rev=7354214b8834b71bb0acb4a7c93b3efa051001b8)",
  "tokio",
 ]
 
@@ -1698,7 +1697,7 @@ dependencies = [
  "tinyjuice-drivers",
  "tinystoragedrivers-busproxy",
  "tinystoragedrivers-client",
- "tinystoragedrivers-core",
+ "tinystoragedrivers-core 1.9.0 (git+https://github.com/tinyhumansai/tinystoragedrivers?rev=d8ebef1a98df3918ed3b80719fdc1414ee20f7a4)",
  "tinystoragedrivers-tinybus",
  "tokio",
 ]
@@ -1706,7 +1705,7 @@ dependencies = [
 [[package]]
 name = "tinystoragedrivers-bus"
 version = "1.9.0"
-source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=7354214b8834b71bb0acb4a7c93b3efa051001b8#7354214b8834b71bb0acb4a7c93b3efa051001b8"
+source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=d8ebef1a98df3918ed3b80719fdc1414ee20f7a4#d8ebef1a98df3918ed3b80719fdc1414ee20f7a4"
 dependencies = [
  "serde",
  "serde_json",
@@ -1716,7 +1715,7 @@ dependencies = [
 [[package]]
 name = "tinystoragedrivers-busproxy"
 version = "1.9.0"
-source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=7354214b8834b71bb0acb4a7c93b3efa051001b8#7354214b8834b71bb0acb4a7c93b3efa051001b8"
+source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=d8ebef1a98df3918ed3b80719fdc1414ee20f7a4#d8ebef1a98df3918ed3b80719fdc1414ee20f7a4"
 dependencies = [
  "async-trait",
  "serde",
@@ -1724,20 +1723,20 @@ dependencies = [
  "tinybus",
  "tinystoragedrivers-bus",
  "tinystoragedrivers-client",
- "tinystoragedrivers-core",
+ "tinystoragedrivers-core 1.9.0 (git+https://github.com/tinyhumansai/tinystoragedrivers?rev=d8ebef1a98df3918ed3b80719fdc1414ee20f7a4)",
  "tokio",
 ]
 
 [[package]]
 name = "tinystoragedrivers-client"
 version = "1.9.0"
-source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=7354214b8834b71bb0acb4a7c93b3efa051001b8#7354214b8834b71bb0acb4a7c93b3efa051001b8"
+source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=d8ebef1a98df3918ed3b80719fdc1414ee20f7a4#d8ebef1a98df3918ed3b80719fdc1414ee20f7a4"
 dependencies = [
  "async-trait",
  "serde",
  "serde_json",
  "tinystoragedrivers-bus",
- "tinystoragedrivers-core",
+ "tinystoragedrivers-core 1.9.0 (git+https://github.com/tinyhumansai/tinystoragedrivers?rev=d8ebef1a98df3918ed3b80719fdc1414ee20f7a4)",
  "tinystoragedrivers-secrets",
  "tokio",
 ]
@@ -1752,7 +1751,23 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tinystoragedrivers-schema",
+ "tinystoragedrivers-schema 1.9.0 (git+https://github.com/tinyhumansai/tinystoragedrivers?rev=7354214b8834b71bb0acb4a7c93b3efa051001b8)",
+ "tokio",
+ "ulid",
+ "zstd",
+]
+
+[[package]]
+name = "tinystoragedrivers-core"
+version = "1.9.0"
+source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=d8ebef1a98df3918ed3b80719fdc1414ee20f7a4#d8ebef1a98df3918ed3b80719fdc1414ee20f7a4"
+dependencies = [
+ "async-trait",
+ "data-encoding",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tinystoragedrivers-schema 1.9.0 (git+https://github.com/tinyhumansai/tinystoragedrivers?rev=d8ebef1a98df3918ed3b80719fdc1414ee20f7a4)",
  "tokio",
  "ulid",
  "zstd",
@@ -1769,9 +1784,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinystoragedrivers-schema"
+version = "1.9.0"
+source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=d8ebef1a98df3918ed3b80719fdc1414ee20f7a4#d8ebef1a98df3918ed3b80719fdc1414ee20f7a4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "tinystoragedrivers-secrets"
 version = "1.9.0"
-source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=7354214b8834b71bb0acb4a7c93b3efa051001b8#7354214b8834b71bb0acb4a7c93b3efa051001b8"
+source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=d8ebef1a98df3918ed3b80719fdc1414ee20f7a4#d8ebef1a98df3918ed3b80719fdc1414ee20f7a4"
 dependencies = [
  "async-trait",
  "atomicwrites",
@@ -1783,7 +1808,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tinystoragedrivers-core",
+ "tinystoragedrivers-core 1.9.0 (git+https://github.com/tinyhumansai/tinystoragedrivers?rev=d8ebef1a98df3918ed3b80719fdc1414ee20f7a4)",
  "tokio",
  "winapi-util",
  "windows-permissions",
@@ -1794,7 +1819,7 @@ dependencies = [
 [[package]]
 name = "tinystoragedrivers-tinybus"
 version = "1.9.0"
-source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=7354214b8834b71bb0acb4a7c93b3efa051001b8#7354214b8834b71bb0acb4a7c93b3efa051001b8"
+source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=d8ebef1a98df3918ed3b80719fdc1414ee20f7a4#d8ebef1a98df3918ed3b80719fdc1414ee20f7a4"
 dependencies = [
  "async-trait",
  "serde",
@@ -1803,7 +1828,7 @@ dependencies = [
  "tinybus-module",
  "tinystoragedrivers-bus",
  "tinystoragedrivers-busproxy",
- "tinystoragedrivers-core",
+ "tinystoragedrivers-core 1.9.0 (git+https://github.com/tinyhumansai/tinystoragedrivers?rev=d8ebef1a98df3918ed3b80719fdc1414ee20f7a4)",
  "tokio",
  "ulid",
 ]
