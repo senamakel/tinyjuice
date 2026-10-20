@@ -38,7 +38,7 @@ log = "0.4"
 [dev-dependencies]
 # Tests serve the storage objects on the in-memory broker the module connects to.
 tinystoragedrivers-client = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "7354214b8834b71bb0acb4a7c93b3efa051001b8" }
-tinybus = { version = "=0.3.8", default-features = false, features = ["test-support"] }
+tinybus = { version = "=0.3.8", git = "https://github.com/tinyhumansai/tinybus", rev = "5e3c882c46b84fe319b38332123dd8acc3cd826e", default-features = false, features = ["test-support"] }
 tempfile = "3"
 async-trait = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
