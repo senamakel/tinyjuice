@@ -73,6 +73,71 @@ fn ccr_blob_dispatch_rejects_unknown_operation_and_version() {
 }
 
 #[test]
+fn ccr_blob_dispatch_refuses_missing_or_non_blob_owner_steps() {
+    let request = BlobTargetRequest {
+        operation: CCR_PREFIX_OPERATION.into(),
+        version: CCR_PREFIX_OPERATION_VERSION,
+        source: "tinyjuice_ccr/token".into(),
+    };
+    let missing = CcrMigrationHandler {
+        schema: Schema::new(tinystoragedrivers_core::schema::Owner::new("juice").unwrap()),
+    };
+    assert_eq!(
+        missing.blob_target(request.clone()).unwrap_err().kind,
+        TransformErrorKind::UnsupportedOperation
+    );
+
+    let documents = CcrMigrationHandler {
+        schema: Schema::new(tinystoragedrivers_core::schema::Owner::new("juice").unwrap())
+            .collection(
+                "juice/ccr",
+                2,
+                tinystoragedrivers_core::schema::ScopeClass::Module,
+            )
+            .step(Step::new(CCR_PREFIX_STEP, "juice/ccr", 1, 2, |_| Ok(Vec::new()))),
+    };
+    assert_eq!(
+        documents.blob_target(request).unwrap_err().kind,
+        TransformErrorKind::UnsupportedOperation
+    );
+}
+
+#[test]
+fn ccr_blob_dispatch_accepts_unmatched_sources_as_noops_and_rejects_data_rewrites() {
+    let unmatched = handler().blob_target(BlobTargetRequest {
+        operation: CCR_PREFIX_OPERATION.into(),
+        version: CCR_PREFIX_OPERATION_VERSION,
+        source: "another-owner/token".into(),
+    });
+    assert_eq!(unmatched.unwrap(), None);
+
+    let data_rewriter = CcrMigrationHandler {
+        schema: Schema::new(tinystoragedrivers_core::schema::Owner::new("juice").unwrap())
+            .blobs(
+                "juice/ccr",
+                tinystoragedrivers_core::schema::ScopeClass::Module,
+            )
+            .step(
+                Step::blobs(CCR_PREFIX_STEP, "juice/ccr", 1, 2, |source, _, _| {
+                    Ok(Some(("juice/ccr/token".into(), Some("text/plain".into()), source.into_bytes())))
+                })
+                .source_prefix("tinyjuice_ccr/"),
+            ),
+    };
+    assert_eq!(
+        data_rewriter
+            .blob_target(BlobTargetRequest {
+                operation: CCR_PREFIX_OPERATION.into(),
+                version: CCR_PREFIX_OPERATION_VERSION,
+                source: "tinyjuice_ccr/token".into(),
+            })
+            .unwrap_err()
+            .kind,
+        TransformErrorKind::InvalidInput
+    );
+}
+
+#[test]
 fn ccr_export_rejects_other_transform_families() {
     let reply = handler().transform(MigrationPayload::Documents(DocumentsTransformRequest {
         operation: CCR_PREFIX_OPERATION.into(),
