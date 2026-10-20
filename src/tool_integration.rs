@@ -17,9 +17,12 @@
 
 use once_cell::sync::OnceCell;
 use serde_json::Value;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
-use super::compress::route;
+use super::compress::{route, route_with_store};
+use super::cache::store::{CcrStore, GlobalCcrStore};
+use super::llm::{GenerateCallback, global_generate_callback};
+use super::summarize::SummaryState;
 use super::types::{AgentTokenjuiceCompression, CompressInput, CompressOptions, ContentHint};
 
 /// Skip compaction for outputs smaller than this (bytes) by default. Tiny
@@ -52,13 +55,16 @@ pub fn current_options() -> CompressOptions {
         .clone()
 }
 
-fn options_for_agent(profile: AgentTokenjuiceCompression) -> Result<CompressOptions, &'static str> {
+fn options_for_agent(
+    profile: AgentTokenjuiceCompression,
+    configured: &CompressOptions,
+) -> Result<CompressOptions, &'static str> {
     match profile {
         AgentTokenjuiceCompression::Off => Err("none/agent-profile-off"),
         AgentTokenjuiceCompression::Auto => Err("none/agent-profile-auto-unresolved"),
-        AgentTokenjuiceCompression::Full => Ok(current_options()),
+        AgentTokenjuiceCompression::Full => Ok(configured.clone()),
         AgentTokenjuiceCompression::Light => {
-            let mut opts = current_options();
+            let mut opts = configured.clone();
             // Coding agents need raw, exact tool text more than aggressive
             // token savings. With CCR off and lossy-without-CCR disallowed,
             // every lossy compressor declines in route(), while any truly
