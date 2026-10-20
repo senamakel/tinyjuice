@@ -30,6 +30,8 @@ use tinystoragedrivers_tinybus::migration::{
 
 const EXPECTED_METHODS: &[&str] = tinyjuice_bus::METHODS;
 
+#[path = "support/juice_storage.rs"]
+mod juice_storage;
 #[path = "support/mod.rs"]
 mod support;
 
@@ -96,7 +98,7 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
 
     // Attach two current-only governed profiles after the same peer served
     // GetSchema and migrated its owner CCR data.
-    let governed = support::JuiceStorage::attach(&modules, &controller)
+    let governed = juice_storage::JuiceStorage::attach(&modules, &controller)
         .await
         .expect("governed host storage should attach");
     let (lease_a, descriptor_a) = governed
