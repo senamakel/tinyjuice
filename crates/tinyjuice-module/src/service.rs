@@ -161,7 +161,11 @@ impl Compression {
             .to_string())
     }
 
-    async fn compress(&self, content: String, hint: ContentHint) -> BusResult<CompressedOutput> {
+    pub(crate) async fn compress(
+        &self,
+        content: String,
+        hint: ContentHint,
+    ) -> BusResult<CompressedOutput> {
         Ok(tinyjuice::compress_content_with_store(
             &content,
             Some(hint),
