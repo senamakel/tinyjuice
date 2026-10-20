@@ -13,7 +13,7 @@ CONSUMER_MANIFEST = tomllib.loads(
 )
 
 
-REV = "d8ebef1a98df3918ed3b80719fdc1414ee20f7a4"
+REV = "a04e3a174fa8f28d5229a816ca6b39c72a9efd7b"
 SOURCE = (
     "git+https://github.com/tinyhumansai/tinystoragedrivers"
     f"?rev={REV}#{REV}"

@@ -31,10 +31,10 @@ serde_json = "1"
 # TSD source revision as the bus and drivers. The module has no storage backend
 # or file of its own.
 tinyjuice-drivers = { path = "../tinyjuice-drivers" }
-tinystoragedrivers-core = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "d8ebef1a98df3918ed3b80719fdc1414ee20f7a4" }
-tinystoragedrivers-busproxy = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "d8ebef1a98df3918ed3b80719fdc1414ee20f7a4" }
-tinystoragedrivers-client = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "d8ebef1a98df3918ed3b80719fdc1414ee20f7a4" }
-tinystoragedrivers-tinybus = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "d8ebef1a98df3918ed3b80719fdc1414ee20f7a4", features = ["migration-delivery"] }
+tinystoragedrivers-core = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "a04e3a174fa8f28d5229a816ca6b39c72a9efd7b" }
+tinystoragedrivers-busproxy = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "a04e3a174fa8f28d5229a816ca6b39c72a9efd7b" }
+tinystoragedrivers-client = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "a04e3a174fa8f28d5229a816ca6b39c72a9efd7b" }
+tinystoragedrivers-tinybus = { version = "=1.9.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "a04e3a174fa8f28d5229a816ca6b39c72a9efd7b", features = ["migration-delivery"] }
 log = "0.4"
 
 [dev-dependencies]
