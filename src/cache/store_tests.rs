@@ -53,7 +53,11 @@ fn concurrent_configure_and_put_preserve_the_final_bounds() {
     let configurator = std::thread::spawn(move || {
         configure_start.wait();
         for index in 0..128 {
-            let (entries, bytes) = if index % 2 == 0 { (64, 2 * 1024 * 1024) } else { (2, 64 * 1024) };
+            let (entries, bytes) = if index % 2 == 0 {
+                (64, 2 * 1024 * 1024)
+            } else {
+                (2, 64 * 1024)
+            };
             configure_store.configure(entries, bytes, None);
         }
         configure_store.configure(1, 1, None);
@@ -64,7 +68,10 @@ fn concurrent_configure_and_put_preserve_the_final_bounds() {
     configurator.join().unwrap();
 
     let (entries, bytes) = store.stats();
-    assert!(entries <= 1 && bytes <= 1, "final bounds held: {entries} entries, {bytes} bytes");
+    assert!(
+        entries <= 1 && bytes <= 1,
+        "final bounds held: {entries} entries, {bytes} bytes"
+    );
 }
 
 #[test]
