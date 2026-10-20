@@ -330,7 +330,10 @@ pub(crate) mod exports {
     tinybus_module::module_export_optional_static! {
         setup_with_context = super::setup,
         worker_threads = 2,
-        provides = ["ai.tinyhumans.tinyjuice.Compression"],
+        provides = [
+            "ai.tinyhumans.tinyjuice.Compression",
+            "org.tinystoragedrivers.Migration",
+        ],
         methods = [
             "Install",
             "Detect",

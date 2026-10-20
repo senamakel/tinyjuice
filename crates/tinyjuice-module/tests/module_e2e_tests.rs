@@ -54,10 +54,28 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         .manifest
         .provides
         .iter()
-        .flat_map(|interface| interface.methods.iter())
+        .find(|interface| {
+            interface.version.interface.as_str() == "ai.tinyhumans.tinyjuice.Compression"
+        })
+        .expect("the compression interface should be advertised")
+        .methods
+        .iter()
         .map(tinybus::MemberName::as_str)
         .collect();
     assert_eq!(methods, EXPECTED_METHODS);
+    let migration = loaded
+        .manifest
+        .provides
+        .iter()
+        .find(|interface| {
+            interface.version.interface.as_str() == MIGRATION_INTERFACE
+        })
+        .expect("the migration interface should be advertised");
+    assert!(
+        migration.methods.is_empty(),
+        "the current ABI manifest attaches methods only to its primary interface"
+    );
+    assert_eq!(loaded.manifest.provides.len(), 2);
 
     wait_until_serving(&client, BUS_NAME, Duration::from_secs(5))
         .await
@@ -282,6 +300,18 @@ async fn assert_legacy_ccr_migrates_over_the_loaded_module(
     assert!(blobs.get("juice/ccr/expired").await.unwrap().is_none());
     assert!(blobs.get("juice/ccr/persistent").await.unwrap().is_some());
     assert!(blobs.get("other/keep").await.unwrap().is_some());
+    assert!(
+        blobs.get("tinyjuice_ccr/live").await.unwrap().is_none(),
+        "successful migration removes the legacy live source"
+    );
+    assert!(
+        blobs.get("tinyjuice_ccr/expired").await.unwrap().is_none(),
+        "successful migration removes the expired legacy source"
+    );
+    assert!(
+        blobs.get("tinyjuice_ccr/persistent").await.unwrap().is_none(),
+        "successful migration removes the persistent legacy source"
+    );
 
     now.store(5_999, Ordering::SeqCst);
     assert!(blobs.get("juice/ccr/live").await.unwrap().is_some());

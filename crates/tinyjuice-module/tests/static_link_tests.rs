@@ -5,7 +5,7 @@
 use tinybus::test_support::wait_until_serving;
 use tinybus::{Connection, module::ModuleState};
 use tinyjuice_module::{BUS_NAME, linked_module};
-use tinystoragedrivers_tinybus::migration::MigrationModuleClient;
+use tinystoragedrivers_tinybus::migration::{MIGRATION_INTERFACE, MigrationModuleClient};
 
 #[path = "support/mod.rs"]
 mod support;
@@ -32,10 +32,26 @@ async fn linked_module_is_admitted_and_serves_its_bus_name() {
         .manifest
         .provides
         .iter()
-        .flat_map(|interface| interface.methods.iter())
+        .find(|interface| {
+            interface.version.interface.as_str() == "ai.tinyhumans.tinyjuice.Compression"
+        })
+        .expect("the compression interface should be advertised")
+        .methods
+        .iter()
         .map(tinybus::MemberName::as_str)
         .collect();
     assert_eq!(methods, tinyjuice_bus::METHODS);
+    let migration = info
+        .manifest
+        .provides
+        .iter()
+        .find(|interface| interface.version.interface.as_str() == MIGRATION_INTERFACE)
+        .expect("the migration interface should be advertised");
+    assert!(
+        migration.methods.is_empty(),
+        "the current ABI manifest attaches methods only to its primary interface"
+    );
+    assert_eq!(info.manifest.provides.len(), 2);
     wait_until_serving(&fixture.client, BUS_NAME, std::time::Duration::from_secs(5))
         .await
         .expect("linked module should become ready");
