@@ -89,11 +89,25 @@ impl Compression {
 
 impl Default for Compression {
     fn default() -> Self {
-        let generate: Arc<GenerateCallback> = Arc::new(|_: GenerateRequest| {
-            Box::pin(async { Ok(None) }) as GenerateFuture
-        });
-        Self::new(None, None, false, generate)
+        Self::new(None, None, false)
     }
+}
+
+fn generate_callback(connection: &Connection) -> Arc<GenerateCallback> {
+    let connection = connection.clone();
+    Arc::new(move |request: GenerateRequest| {
+        let connection = connection.clone();
+        Box::pin(async move {
+            let proxy = connection
+                .proxy(ML_HOST_NAME, ML_HOST_PATH, ML_HOST_NAME)
+                .map_err(|error| error.to_string())?
+                .with_timeout(GENERATE_TIMEOUT);
+            proxy
+                .call(ml_host::GENERATE, (request,))
+                .await
+                .map_err(|error| error.to_string())
+        }) as GenerateFuture
+    })
 }
 
 #[tinybus::interface(name = "ai.tinyhumans.tinyjuice.Compression")]
@@ -445,27 +459,10 @@ async fn setup_connection_services_with_storage(
     storage: Option<crate::storage::StorageBinding>,
     require_storage: bool,
 ) -> BusResult<()> {
-    // The summary stage's model call goes to the same host object: the module
-    // writes the prompt, the host owns the model and the turn it runs under.
-    let llm_connection = connection.clone();
-    let generate: Arc<GenerateCallback> = Arc::new(move |request: GenerateRequest| {
-        let connection = llm_connection.clone();
-        Box::pin(async move {
-            let proxy = connection
-                .proxy(ML_HOST_NAME, ML_HOST_PATH, ML_HOST_NAME)
-                .map_err(|error| error.to_string())?
-                .with_timeout(GENERATE_TIMEOUT);
-            proxy
-                .call(ml_host::GENERATE, (request,))
-                .await
-                .map_err(|error| error.to_string())
-        }) as GenerateFuture
-    });
-
     connection
         .serve_at(
             OBJECT_PATH.try_into()?,
-            Compression::new(Some(connection.clone()), storage, require_storage, generate),
+            Compression::new(Some(connection.clone()), storage, require_storage),
         )
         .await?;
     connection.request_name(BUS_NAME).await?;

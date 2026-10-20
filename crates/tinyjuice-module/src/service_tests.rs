@@ -61,12 +61,14 @@ async fn compression_services_keep_durable_ccr_in_their_own_storage() {
     let _install = crate::storage::tests::INSTALL.lock().await;
     let first = rig(true).await.unwrap();
     let second = rig(true).await.unwrap();
-    let first_service = Compression {
-        connection: Some(first.module.clone()),
-    };
-    let second_service = Compression {
-        connection: Some(second.module.clone()),
-    };
+    let first_storage = crate::storage::bind(first.module.clone(), None)
+        .await
+        .unwrap();
+    let second_storage = crate::storage::bind(second.module.clone(), None)
+        .await
+        .unwrap();
+    let first_service = Compression::new(Some(first.module.clone()), first_storage, false);
+    let second_service = Compression::new(Some(second.module.clone()), second_storage, false);
     let install = || InstallRequest {
         options: CompressOptions {
             min_bytes_to_compress: 64,

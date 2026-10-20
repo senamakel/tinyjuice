@@ -130,9 +130,7 @@ async fn install_moves_the_disk_tier_onto_host_blobs_and_off_again() -> TestResu
     use crate::service::Compression;
     let _install = INSTALL.lock().await;
     let rig = rig(true).await?;
-    let service = Compression {
-        connection: Some(rig.module.clone()),
-    };
+    let service = Compression::new(Some(rig.module.clone()), None, false);
     let host_blobs = Arc::clone(rig.backend.for_scope(&Scope::local())?.blobs());
 
     service.install(install_request(true)).await?;
