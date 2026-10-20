@@ -118,7 +118,7 @@ async fn compression_services_keep_durable_ccr_in_their_own_storage() {
     let second_has_blob = second_blobs.get(&key).await.unwrap().is_some();
     assert!(
         first_has_blob,
-        "the first service must write the original to its own storage"
+        "the first service must write the original to its own storage; first={first_has_blob}, second={second_has_blob}"
     );
     assert!(
         !second_has_blob,
