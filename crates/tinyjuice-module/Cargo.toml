@@ -21,6 +21,7 @@ tinyjuice = { version = "0.11.0", path = "../..", default-features = false, feat
 # The interface vocabulary. Shared with hosts, so this adapter cannot drift
 # from what a caller was compiled against.
 tinyjuice-bus = { version = "0.11.0", path = "../tinyjuice-bus" }
+serde = { version = "1", features = ["derive"] }
 tinybus = { version = "=0.3.10", git = "https://github.com/tinyhumansai/tinybus", rev = "6b3c5b0cc14b1d07b68055b17a937b11de613efd", default-features = false, features = ["macros", "modules"] }
 tinybus-module = { version = "=0.3.10", git = "https://github.com/tinyhumansai/tinybus", rev = "6b3c5b0cc14b1d07b68055b17a937b11de613efd" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }

@@ -181,23 +181,20 @@ pub(crate) async fn durable_tier(
 pub(crate) async fn durable_tier_on(
     blobs: Arc<dyn BlobStore>,
     ttl: Option<Duration>,
-) -> Option<Arc<dyn CcrStore>> {
-    tier_on(blobs, ttl).await
+) -> Result<Arc<dyn CcrStore>, String> {
+    let opened = tokio::task::spawn_blocking(move || BlobCcrStore::new(blobs, ttl))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    log::debug!("[tinyjuice_module] ccr durable tier on bound host blobs ttl={ttl:?}");
+    Ok(Arc::new(OffWorker(opened)))
 }
 
 /// The CCR durable tier on `blobs`, or `None` when the store cannot be built
 /// (for example a handle that cannot expire blobs for `ttl`).
 async fn tier_on(blobs: Arc<dyn BlobStore>, ttl: Option<Duration>) -> Option<Arc<dyn CcrStore>> {
-    // The store builds a blocking bridge, which must not run on an async worker.
-    let opened = tokio::task::spawn_blocking(move || BlobCcrStore::new(blobs, ttl))
-        .await
-        .map_err(|error| error.to_string())
-        .and_then(|opened| opened.map_err(|error| error.to_string()));
-    match opened {
-        Ok(store) => {
-            log::debug!("[tinyjuice_module] ccr durable tier on host blobs ttl={ttl:?}");
-            Some(Arc::new(OffWorker(store)))
-        }
+    match durable_tier_on(blobs, ttl).await {
+        Ok(store) => Some(store),
         Err(error) => {
             log::warn!("[tinyjuice_module] ccr store on host storage unavailable: {error}");
             None
