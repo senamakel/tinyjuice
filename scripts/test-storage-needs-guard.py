@@ -225,10 +225,13 @@ class StorageNeedsGuardTests(unittest.TestCase):
         )
         self.assertEqual(root_manifest["patch"]["https://github.com/tinyhumansai/tinybus"]["tinybus"]["path"],
                          "vendor/tinybus/crates/tinybus")
+        self.assertEqual(
+            root_manifest["patch"]["https://github.com/tinyhumansai/tinybus"]["tinybus-module"]["path"],
+            "vendor/tinybus/crates/tinybus-module",
+        )
         self.assertEqual(root_manifest["patch"]["crates-io"]["tinybus"]["path"],
                          "vendor/tinybus/crates/tinybus")
-        self.assertEqual(root_manifest["patch"]["crates-io"]["tinybus-module"]["path"],
-                         "vendor/tinybus/crates/tinybus-module")
+        self.assertNotIn("tinybus-module", root_manifest["patch"]["crates-io"])
 
     def test_stale_tinyjuice_bus_contract_version_fails_closed(self):
         metadata = metadata_fixture()
