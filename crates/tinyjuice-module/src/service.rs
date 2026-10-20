@@ -114,33 +114,27 @@ impl Compression {
     pub(crate) async fn install(&self, request: InstallRequest) -> BusResult<()> {
         let ttl = request.ccr_ttl_secs.map(std::time::Duration::from_secs);
         let durable = if request.ccr_durable {
-            if self.state.require_storage {
-                match self.state.storage.as_ref() {
-                    Some(storage) => {
-                        match crate::storage::durable_tier_on(Arc::clone(&storage.blobs), ttl).await
-                        {
-                            Ok(durable) => Some(durable),
-                            Err(error) => {
-                                log::warn!(
-                                    "[tinyjuice_module] configured CCR store unavailable: {error}"
-                                );
-                                return Err(tinybus::Error::failed(
-                                    "configured CCR storage unavailable",
-                                ));
-                            }
+            match self.state.storage.as_ref() {
+                Some(storage) => {
+                    match crate::storage::durable_tier_on(Arc::clone(&storage.blobs), ttl).await {
+                        Ok(durable) => Some(durable),
+                        Err(error) if self.state.require_storage => {
+                            log::warn!(
+                                "[tinyjuice_module] configured CCR store unavailable: {error}"
+                            );
+                            return Err(tinybus::Error::failed(
+                                "configured CCR storage unavailable",
+                            ));
+                        }
+                        Err(error) => {
+                            log::warn!(
+                                "[tinyjuice_module] ccr store on host storage unavailable: {error}"
+                            );
+                            None
                         }
                     }
-                    None => {
-                        return Err(tinybus::Error::failed("configured CCR storage unavailable"));
-                    }
                 }
-            } else {
-                match self.state.connection.as_ref() {
-                    Some(connection) => {
-                        crate::storage::legacy_durable_tier(connection.clone(), ttl).await
-                    }
-                    None => None,
-                }
+                None => None,
             }
         } else {
             None
