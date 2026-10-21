@@ -1,7 +1,7 @@
 [package]
 rust-version = "1.88"
 name = "tinyjuice"
-version = "0.11.0"
+version = "0.11.1"
 edition = "2024"
 license = "GPL-3.0-only"
 description = "Pluggable token compression for OpenHuman."
@@ -43,7 +43,7 @@ jaq-json = { version = "2", optional = true }
 # The wire contract, defined once and shared with the module and with hosts.
 # This crate re-exports its types from `src/types.rs` rather than declaring a
 # second copy — see the note there.
-tinyjuice-bus = { version = "0.11.0", path = "crates/tinyjuice-bus" }
+tinyjuice-bus = { version = "0.11.1", path = "crates/tinyjuice-bus" }
 async-trait = "0.1"
 dirs = "7"
 hex = "0.4"

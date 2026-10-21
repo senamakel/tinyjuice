@@ -179,7 +179,7 @@ class StorageNeedsGuardTests(unittest.TestCase):
             "default-features": False,
         })
 
-        self.assertEqual(root_manifest["package"]["version"], "0.11.0")
+        self.assertEqual(root_manifest["package"]["version"], "0.11.1")
         self.assertEqual(root_manifest["dependencies"]["tinyjuice-bus"]["version"], CONTRACT_VERSION)
         self.assertEqual(consumer_manifest["dependencies"]["tinyjuice-bus"]["version"], CONTRACT_VERSION)
         examples_manifest = tomllib.loads((ROOT / "crates/tinyjuice-examples/Cargo.toml").read_text())

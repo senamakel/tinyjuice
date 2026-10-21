@@ -1,7 +1,7 @@
 [package]
 rust-version = "1.88"
 name = "tinyjuice-module"
-version = "0.11.0"
+version = "0.11.1"
 edition = "2024"
 license = "GPL-3.0-only"
 description = "Trusted TinyBus module adapter for TinyJuice."
@@ -17,10 +17,10 @@ linked = ["static-link"]
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-tinyjuice = { version = "0.11.0", path = "../..", default-features = false, features = ["jq"] }
+tinyjuice = { version = "0.11.1", path = "../..", default-features = false, features = ["jq"] }
 # The interface vocabulary. Shared with hosts, so this adapter cannot drift
 # from what a caller was compiled against.
-tinyjuice-bus = { version = "0.11.0", path = "../tinyjuice-bus" }
+tinyjuice-bus = { version = "0.11.1", path = "../tinyjuice-bus" }
 serde = { version = "1", features = ["derive"] }
 tinybus = { version = "=0.3.12", git = "https://github.com/tinyhumansai/tinybus", rev = "34d3bd6dda099e54cee11a2f96f28a21da9e0759", default-features = false, features = ["macros", "modules"] }
 tinybus-module = { version = "=0.3.12", git = "https://github.com/tinyhumansai/tinybus", rev = "34d3bd6dda099e54cee11a2f96f28a21da9e0759" }
