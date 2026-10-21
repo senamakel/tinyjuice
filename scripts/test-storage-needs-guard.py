@@ -11,9 +11,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACT_VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["version"]
-TSD_BUS_VERSION = "1.9.0"
-TSD_REV = "a04e3a174fa8f28d5229a816ca6b39c72a9efd7b"
-TINYBUS_VERSION = "0.3.11"
+TSD_BUS_VERSION = "1.10.0"
+TSD_REV = "078d2dee0f299d97dbc22fa7210bd64098a4bf59"
+TINYBUS_VERSION = "0.3.12"
 REV = TSD_REV
 SOURCE = (
     "git+https://github.com/tinyhumansai/tinystoragedrivers"
@@ -31,7 +31,7 @@ PACKAGE_ID = (
 )
 ROOT_ID = "path+file:///proof#tinyjuice-storage-needs-consumer@0.1.0"
 TINYJUICE_BUS_ID = f"path+file:///tinyjuice/crates/tinyjuice-bus#tinyjuice-bus@{CONTRACT_VERSION}"
-TINYBUS_SDK_REV = "9e14f65666b11782ec1054aba576114026d180f8"
+TINYBUS_SDK_REV = "34d3bd6dda099e54cee11a2f96f28a21da9e0759"
 SERDE_ID = "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.228"
 
 
@@ -179,7 +179,7 @@ class StorageNeedsGuardTests(unittest.TestCase):
             "default-features": False,
         })
 
-        self.assertEqual(root_manifest["package"]["version"], "0.11.0")
+        self.assertEqual(root_manifest["package"]["version"], "0.11.1")
         self.assertEqual(root_manifest["dependencies"]["tinyjuice-bus"]["version"], CONTRACT_VERSION)
         self.assertEqual(consumer_manifest["dependencies"]["tinyjuice-bus"]["version"], CONTRACT_VERSION)
         examples_manifest = tomllib.loads((ROOT / "crates/tinyjuice-examples/Cargo.toml").read_text())
@@ -221,7 +221,7 @@ class StorageNeedsGuardTests(unittest.TestCase):
         self.assertEqual(
             sdk_gitlink,
             f"160000 {TINYBUS_SDK_REV} 0\tvendor/tinybus",
-            "TinyBus SDK gitlink must pin the verified 0.3.11 source, including in a nonrecursive checkout",
+            "TinyBus SDK gitlink must pin the verified 0.3.12 source, including in a nonrecursive checkout",
         )
         self.assertEqual(root_manifest["patch"]["https://github.com/tinyhumansai/tinybus"]["tinybus"]["path"],
                          "vendor/tinybus/crates/tinybus")
