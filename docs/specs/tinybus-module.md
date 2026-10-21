@@ -111,7 +111,7 @@ narrow these values but cannot enlarge the module's stock ceilings. Grep keeps
 matching lines before allocating remaining context slots. An explicit summary
 `max_chars` also bounds a model-failure notice combined with its overview.
 
-## Model-attributed savings (contract 2.1)
+## Model-attributed savings (contract 3.1)
 
 The module owns aggregation and persistence. Since contract 2.3 the totals are
 one document, `juice.savings/totals` (snake_case body, `updated_ms`), in the
@@ -124,6 +124,13 @@ link only `tinyjuice-bus::savings` and call these members:
 - `ImportSavings(SavingsAggregate) -> bool` (2.3) adopts a legacy camelCase
   snapshot the host read from its old file, only while nothing has been
   recorded; `false` means totals already existed and nothing changed.
+- `ImportSavingsAt(ImportSavingsAtRequest) -> bool` (3.1) adopts that snapshot
+  through the request's temporary `StorageCallbackAddress` (`host` plus a
+  per-invocation `object_root`). The module opens the callback only for this
+  call and writes `juice.savings/totals` with an absent/version precondition;
+  an existing total or a concurrent writer wins. The normal module storage
+  provider and cached handles are unchanged. The host revokes the callback
+  after the call, so retries must create a new address.
 - `RecordSavings(RecordSavingsRequest) -> ()` records a positive token saving.
   The host supplies the attribution model, compressor identifier, pre/post
   token estimates, and its catalog lookup of the input price per million

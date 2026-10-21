@@ -31,6 +31,30 @@ pub struct SavingsAggregate {
     pub by_compressor: HashMap<String, SavingsBucket>,
 }
 
+/// A callback storage endpoint that a host grants for one import invocation.
+///
+/// The host name must be the unique name of the attested callback connection;
+/// `object_root` must identify that invocation's isolated object subtree. The
+/// address contains no storage policy or write condition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorageCallbackAddress {
+    /// Unique TinyBus name serving this callback.
+    pub host: String,
+    /// Per-invocation TinyBus object root served by `host`.
+    pub object_root: String,
+}
+
+/// A savings snapshot plus a temporary callback destination for adoption.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportSavingsAtRequest {
+    /// The legacy savings snapshot to adopt if the destination has no totals.
+    pub aggregate: SavingsAggregate,
+    /// Host-created callback authority, valid only while the import call runs.
+    pub callback: StorageCallbackAddress,
+}
+
 /// One compaction attributed to the model that would consume its output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

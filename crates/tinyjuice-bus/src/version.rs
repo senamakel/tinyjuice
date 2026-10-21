@@ -2,9 +2,11 @@
 
 /// The wire contract version this crate defines.
 /// Version 3 removes the host-provided disk path and replaces it with an
-/// explicit host-durability capability. Version 2 hosts must be rejected so
-/// their old `diskTierRoot` request cannot silently lose its persistence.
-pub const CONTRACT_VERSION: (u32, u32) = (3, 0);
+/// explicit host-durability capability. Minor version 1 adds the
+/// invocation-scoped savings-import callback while retaining the old import
+/// method. Version 2 hosts must be rejected so their old `diskTierRoot`
+/// request cannot silently lose its persistence.
+pub const CONTRACT_VERSION: (u32, u32) = (3, 1);
 
 /// Returns whether a host using [`CONTRACT_VERSION`] can bind to `module`.
 ///

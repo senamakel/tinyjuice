@@ -52,6 +52,9 @@ pub mod methods {
     /// when the module has recorded nothing yet; answers whether it took it.
     /// Added in contract 2.3.
     pub const IMPORT_SAVINGS: &str = "ImportSavings";
+    /// Adopts legacy totals through an invocation-scoped host storage callback.
+    /// Added in contract 3.1.
+    pub const IMPORT_SAVINGS_AT: &str = "ImportSavingsAt";
     /// Reports what the cache is holding.
     pub const CACHE_STATS: &str = "CacheStats";
 }
@@ -83,4 +86,5 @@ pub const METHODS: &[&str] = &[
     methods::SAVINGS_STATS,
     methods::RESET_SAVINGS,
     methods::IMPORT_SAVINGS,
+    methods::IMPORT_SAVINGS_AT,
 ];

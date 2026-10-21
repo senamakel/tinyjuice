@@ -11,9 +11,9 @@ repository = "https://github.com/tinyhumansai/tinyjuice"
 [dependencies]
 tinyjuice = { path = "../.." }
 tinyjuice-drivers = { path = "../tinyjuice-drivers" }
-tinystoragedrivers = { version = "2.0.2", git = "https://github.com/senamakel/tinystoragedrivers", tag = "v2.0.2", features = ["file"] }
-tinystoragedrivers-api = { version = "2.0.2", git = "https://github.com/senamakel/tinystoragedrivers", tag = "v2.0.2" }
-tinystoragedrivers-types = { version = "2.0.2", git = "https://github.com/senamakel/tinystoragedrivers", tag = "v2.0.2" }
+tinystoragedrivers = { version = "2.1.0", git = "https://github.com/senamakel/tinystoragedrivers", rev = "8a8bd701cc497a4ca099d98cae11aa684dd051aa", features = ["file"] }
+tinystoragedrivers-api = { version = "2.1.0", git = "https://github.com/senamakel/tinystoragedrivers", rev = "8a8bd701cc497a4ca099d98cae11aa684dd051aa" }
+tinystoragedrivers-types = { version = "2.1.0", git = "https://github.com/senamakel/tinystoragedrivers", rev = "8a8bd701cc497a4ca099d98cae11aa684dd051aa" }
 dirs = "7"
 log = "0.4"
 serde_json = "1"
@@ -22,7 +22,7 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 [dev-dependencies]
 async-trait = "0.1"
 tempfile = "3"
-tinystoragedrivers-testkit = { version = "2.0.2", git = "https://github.com/senamakel/tinystoragedrivers", tag = "v2.0.2" }
+tinystoragedrivers-testkit = { version = "2.1.0", git = "https://github.com/senamakel/tinystoragedrivers", rev = "8a8bd701cc497a4ca099d98cae11aa684dd051aa" }
 
 [[bin]]
 name = "tinyjuice"
