@@ -1490,7 +1490,6 @@ dependencies = [
  "tree-sitter-typescript",
  "unicode-segmentation",
  "unicode-width",
- "uuid",
 ]
 
 [[package]]
@@ -1500,6 +1499,24 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tinystoragedrivers-types",
+ "tokio",
+]
+
+[[package]]
+name = "tinyjuice-cli"
+version = "0.11.0"
+dependencies = [
+ "async-trait",
+ "dirs",
+ "log",
+ "serde_json",
+ "tempfile",
+ "tinyjuice",
+ "tinyjuice-drivers",
+ "tinystoragedrivers",
+ "tinystoragedrivers-api",
+ "tinystoragedrivers-testkit",
  "tinystoragedrivers-types",
  "tokio",
 ]
@@ -1520,6 +1537,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyjuice-host"
+version = "0.11.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "log",
+ "serde_json",
+ "tempfile",
+ "tinyjuice-bus",
+ "tinytools",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "tinyjuice-module"
 version = "0.11.2"
 dependencies = [
@@ -1537,6 +1569,21 @@ dependencies = [
  "tinystoragedrivers-testkit",
  "tinystoragedrivers-types",
  "tokio",
+]
+
+[[package]]
+name = "tinystoragedrivers"
+version = "2.1.0"
+source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=05eaada962decbab33bafa4763d2bd1a67f6b456#05eaada962decbab33bafa4763d2bd1a67f6b456"
+dependencies = [
+ "tinystoragedrivers-api",
+ "tinystoragedrivers-blob",
+ "tinystoragedrivers-connect",
+ "tinystoragedrivers-document",
+ "tinystoragedrivers-kv",
+ "tinystoragedrivers-queue",
+ "tinystoragedrivers-secrets",
+ "tinystoragedrivers-types",
 ]
 
 [[package]]
@@ -1564,6 +1611,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tinystoragedrivers-api",
+ "tinystoragedrivers-connect",
  "tinystoragedrivers-types",
 ]
 
@@ -1615,6 +1663,7 @@ source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=05eaada962d
 dependencies = [
  "async-trait",
  "data-encoding",
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1632,9 +1681,11 @@ version = "2.1.0"
 source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=05eaada962decbab33bafa4763d2bd1a67f6b456#05eaada962decbab33bafa4763d2bd1a67f6b456"
 dependencies = [
  "async-trait",
+ "libc",
  "serde",
  "serde_json",
  "tinystoragedrivers-api",
+ "tinystoragedrivers-connect",
  "tinystoragedrivers-types",
 ]
 
@@ -2296,9 +2347,9 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "tinytools"
-version = "0.5.0"
-
-[[patch.unused]]
 name = "tinybus-module"
 version = "0.1.6"
+
+[[patch.unused]]
+name = "tinytools"
+version = "0.5.0"

@@ -14,15 +14,14 @@ exclude = [
     ".github/",
     ".gitmodules",
     "docs/",
-    "vendor/tinybus/",
     "vendor/tinyagents/",
     "crates/tinyjuice-examples/",
     "wiki/",
 ]
 
 [workspace]
-members = ["crates/tinyjuice-bus", "crates/tinyjuice-module", "crates/tinyjuice-drivers"]
-default-members = [".", "crates/tinyjuice-bus", "crates/tinyjuice-module", "crates/tinyjuice-drivers"]
+members = ["crates/tinyjuice-bus", "crates/tinyjuice-module", "crates/tinyjuice-drivers", "crates/tinyjuice-cli", "crates/tinyjuice-host"]
+default-members = [".", "crates/tinyjuice-bus", "crates/tinyjuice-module", "crates/tinyjuice-drivers", "crates/tinyjuice-cli", "crates/tinyjuice-host"]
 exclude = ["vendor/tinybus", "vendor/tinyagents", "crates/tinyjuice-examples"]
 resolver = "3"
 
@@ -30,7 +29,6 @@ resolver = "3"
 # Optional adapter boundary: REPL ops as `tinytools::Tool` impls.
 tinytools = { version = "0.6", git = "https://github.com/tinyhumansai/tinytools", rev = "3a01641f8ebd8a55656cd212f9a90638d958a447", optional = true }
 anyhow = { version = "1", optional = true }
-uuid = { version = ">=1, <1.27", features = ["v4"], optional = true }
 jaq-core = { version = "3", optional = true }
 jaq-std = { version = "3", optional = true }
 jaq-json = { version = "2", optional = true }
@@ -73,28 +71,6 @@ criterion = "0.8"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt", "test-util"] }
 
-[[bin]]
-name = "tinyjuice"
-path = "src/bin/tinyjuice.rs"
-required-features = ["cli-disk-tier"]
-
-[[bin]]
-name = "tinyjuice-reduce"
-path = "src/main.rs"
-required-features = ["cli-disk-tier"]
-
-# These integration suites launch the CLI binaries, which are unavailable in
-# the default host build without the standalone CLI disk-tier feature.
-[[test]]
-name = "cli"
-path = "tests/cli.rs"
-required-features = ["cli-disk-tier"]
-
-[[test]]
-name = "host_cli"
-path = "tests/host_cli.rs"
-required-features = ["cli-disk-tier"]
-
 [[bench]]
 name = "compression"
 harness = false
@@ -103,11 +79,6 @@ harness = false
 default = ["tinyjuice-treesitter"]
 # Exposes the REPL ops as `tinytools::Tool` impls (see src/repl/tools.rs).
 tinytools = ["dep:tinytools", "dep:anyhow", "jq"]
-# File-backed CCR cache commands for the standalone CLI only. Hosts use their
-# own durable CcrStore implementation through the storage bus.
-cli-disk-tier = []
-# Turn-bound `MlHost.Generate` registry (src/host/generate.rs).
-host = ["dep:anyhow", "dep:uuid"]
 # jq-style queries over JSON outputs (the `jq` REPL op and `juice_jq` tool).
 jq = ["dep:jaq-core", "dep:jaq-std", "dep:jaq-json"]
 tinyjuice-treesitter = [
@@ -126,18 +97,15 @@ strip = "debuginfo"
 name = "repl_tool_schema"
 required-features = ["tinytools"]
 
-# tinystoragedrivers names tinybus by git rev; point that source at the same
-# vendored checkout so the module and the storage proxy share one `Connection`.
+# Keep TinyBus identity consistent with the vendored module and storage proxy.
 [patch."https://github.com/tinyhumansai/tinybus"]
 tinybus = { path = "vendor/tinybus/crates/tinybus" }
 
-# Use the TinyTools revision pinned by the nested TinyAgents checkout so the
-# optional adapter and harness share one `tinytools::Tool` identity.
+# Use the TinyTools revision pinned by the nested TinyAgents checkout.
 [patch."https://github.com/tinyhumansai/tinytools"]
 tinytools = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 
-# tinybus is not on crates.io; modules name it by version range so a host can
-# unify it, and standalone builds resolve it to the nested checkout.
+# Resolve standalone module dependencies to the same vendored TinyBus checkout.
 [patch.crates-io]
 tinybus = { path = "vendor/tinybus/crates/tinybus" }
 tinybus-module = { path = "vendor/tinybus/crates/tinybus-module" }
