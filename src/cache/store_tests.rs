@@ -1,6 +1,4 @@
 use super::*;
-#[cfg(feature = "cli-disk-tier")]
-use crate::cache::{disable_disk_tier, enable_disk_tier};
 
 #[test]
 fn round_trips() {
@@ -148,32 +146,6 @@ fn memory_store_rejects_malformed_tokens() {
         store.get_range("../../state/config.toml", 0, 1, RangeUnit::Lines),
         None
     );
-}
-
-#[test]
-#[cfg(feature = "cli-disk-tier")]
-fn disk_tier_survives_memory_miss() {
-    let _guard = crate::cache::DISK_TIER_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let dir = std::env::temp_dir().join(format!("tj-ccr-{}", short_hash("disk-test-seed")));
-    let _ = std::fs::remove_dir_all(&dir);
-    enable_disk_tier(dir.clone());
-    let original = "disk tier unique payload charlie ".repeat(40);
-    let hash = offload(&original);
-    // Simulate memory eviction by clearing the in-memory map directly.
-    {
-        let mut inner = global().lock().unwrap_or_else(|p| p.into_inner());
-        inner.map.remove(&hash);
-    }
-    assert_eq!(
-        retrieve(&hash).as_deref(),
-        Some(original.as_str()),
-        "disk fallback"
-    );
-    // Disable the tier for other tests and clean up.
-    disable_disk_tier();
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

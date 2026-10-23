@@ -11,6 +11,9 @@ use tinyjuice::{
     host_install_specs, host_template, request_from_json_value,
 };
 
+#[path = "../storage.rs"]
+mod storage;
+
 const SUPPORT_GIT_TRAILER: &str = "Co-Authored-By: TinyJuice <tinyjuice@tinyhumans.ai>";
 const CODEX_SUPPORT_ATTRIBUTION: &str = "TinyJuice <tinyjuice@tinyhumans.ai>";
 const CLAUDE_DEFAULT_COMMIT_ATTRIBUTION: &str =
@@ -75,7 +78,6 @@ fn run() -> Result<(), String> {
 }
 
 fn reduce_json(args: Vec<String>) -> Result<(), String> {
-    configure_cli_cache();
     let mut host_override = None;
     let mut path = None;
     let mut index = 0;
@@ -108,6 +110,7 @@ fn reduce_json(args: Vec<String>) -> Result<(), String> {
         }
     }
 
+    configure_cli_cache()?;
     let input = read_input(path.as_deref())?;
     let value = serde_json::from_str(&input).map_err(|error| format!("invalid JSON: {error}"))?;
     let mut request = request_from_json_value(value).map_err(|error| error.to_string())?;
@@ -128,8 +131,13 @@ fn reduce_json(args: Vec<String>) -> Result<(), String> {
 }
 
 fn post_tool_use_hook(host: TinyJuiceHost) -> Result<(), String> {
-    configure_cli_cache();
     let input = read_input(None)?;
+    if configure_cli_cache().is_err() {
+        // A hook runs as a short-lived process, so its in-memory CCR entries
+        // would disappear before the host can retrieve them. Preserve the
+        // original tool output when durable recovery is unavailable.
+        return Ok(());
+    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -524,13 +532,13 @@ fn finish_toml_lines(lines: Vec<String>) -> String {
 }
 
 fn retrieve_command(args: Vec<String>) -> Result<(), String> {
-    configure_cli_cache();
     let token = args
         .first()
         .ok_or_else(|| "retrieve requires a CCR token".to_string())?;
     if args.len() > 1 {
         return Err("retrieve accepts exactly one CCR token".to_string());
     }
+    configure_cli_cache()?;
     let Some(original) = tinyjuice::cache::retrieve(token) else {
         return Err(format!("no original found for token {token}"));
     };
@@ -592,16 +600,15 @@ fn gc_command(args: Vec<String>) -> Result<(), String> {
     };
 
     let root = cli_cache_root();
-    let stats =
-        tinyjuice::cache::gc_disk_dir(&root, ttl.map(std::time::Duration::from_secs), budget)
-            .map_err(|error| error.to_string())?;
+    let (removed, freed_bytes, kept, kept_bytes) =
+        storage::collect(&root, ttl.map(std::time::Duration::from_secs), budget)?;
     println!(
         "gc {}: removed {} entries, freed {} bytes, kept {} ({} bytes)",
         root.display(),
-        stats.removed,
-        stats.freed_bytes,
-        stats.kept,
-        stats.kept_bytes
+        removed,
+        freed_bytes,
+        kept,
+        kept_bytes
     );
     Ok(())
 }
@@ -693,11 +700,14 @@ fn cli_cache_limits_from_env() -> (usize, usize, Option<u64>) {
     )
 }
 
-fn configure_cli_cache() {
+fn configure_cli_cache() -> Result<(), String> {
     let (max_entries, max_bytes, ttl_secs) = cli_cache_limits_from_env();
     tinyjuice::cache::configure(max_entries, max_bytes, ttl_secs);
-    tinyjuice::cache::configure_disk_cap(Some(max_bytes as u64));
-    tinyjuice::cache::enable_disk_tier(cli_cache_root());
+    storage::configure(
+        &cli_cache_root(),
+        ttl_secs.map(std::time::Duration::from_secs),
+        Some(max_bytes as u64),
+    )
 }
 
 fn cli_cache_root() -> PathBuf {

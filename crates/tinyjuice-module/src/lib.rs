@@ -21,7 +21,5 @@ pub use service::exports::linked_module;
 
 pub use service::{BUS_NAME, OBJECT_PATH};
 
-/// What the module stores. A host composes it into its schema registry and
-/// derives the module's storage grant from it, so the grant never repeats the
-/// blob prefix by hand.
-pub use tinyjuice_drivers::storage_schema;
+/// Collections declared by TinyJuice's storage contract.
+pub use tinyjuice_bus::storage::collections;

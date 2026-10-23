@@ -11,6 +11,7 @@ use tinyjuice::types::{AgentTokenjuiceCompression, CompressedOutput, ContentHint
 use tinyjuice::tool_integration::ToolOutputCall;
 use tinyjuice_bus::names::ml_host;
 pub use tinyjuice_bus::names::{BUS_NAME, ML_HOST_NAME, ML_HOST_PATH, OBJECT_PATH};
+use tinyjuice_bus::savings::ImportSavingsAtRequest;
 use tinyjuice_bus::wire::{
     CacheStats, CompactRequest, CompactResponse, GenerateRequest, InstallRequest,
     RangeUnit as WireRangeUnit, RetrieveRange,
@@ -220,6 +221,12 @@ impl Compression {
     ) -> BusResult<bool> {
         savings().import(self.connection.as_ref(), legacy).await
     }
+
+    /// Adopt legacy totals through a host callback scoped to this invocation.
+    /// The callback handle is never installed as the module's ordinary store.
+    async fn import_savings_at(&self, request: ImportSavingsAtRequest) -> BusResult<bool> {
+        import_savings_at(savings(), self.connection.as_ref(), request).await
+    }
 }
 
 /// Requests may narrow a budget but never expand the module's stock ceilings.
@@ -340,7 +347,8 @@ pub(crate) mod exports {
             "RecordSavings",
             "SavingsStats",
             "ResetSavings",
-            "ImportSavings"
+            "ImportSavings",
+            "ImportSavingsAt"
         ],
         signals = [],
         requires = [],
@@ -357,4 +365,27 @@ mod tests;
 fn savings() -> &'static crate::savings_store::Savings {
     static SAVINGS: std::sync::OnceLock<crate::savings_store::Savings> = std::sync::OnceLock::new();
     SAVINGS.get_or_init(crate::savings_store::Savings::new)
+}
+
+/// Perform an import through a callback port without caching that port.
+async fn import_savings_at(
+    savings: &crate::savings_store::Savings,
+    connection: Option<&Connection>,
+    request: ImportSavingsAtRequest,
+) -> BusResult<bool> {
+    let connection = connection
+        .ok_or_else(|| tinybus::Error::failed("request-scoped savings storage is unavailable"))?;
+    let host = tinybus::BusName::new(request.callback.host)
+        .map_err(|error| tinybus::Error::failed(error.to_string()))?;
+    let object_root = tinybus::ObjectPath::new(request.callback.object_root)
+        .map_err(|error| tinybus::Error::failed(error.to_string()))?;
+    let address = tinystoragedrivers_busproxy::StorageAddress::try_new(host, object_root)
+        .map_err(|error| tinybus::Error::failed(error.to_string()))?;
+    let storage =
+        tinystoragedrivers_busproxy::connect_storage_at_address(connection.clone(), address)
+            .await
+            .map_err(|error| tinybus::Error::failed(error.to_string()))?;
+    savings
+        .import_at(Some(connection), &storage, request.aggregate)
+        .await
 }

@@ -25,8 +25,14 @@ on whatever backend it has. `tinyjuice-module` uses the host storage bus
   retaining an original only when it reports success under the content hash
   that callers advertise as the recovery token.
 - A memory miss in `retrieve` / `retrieve_range` falls through to the tier.
-- The library has no file-backed persistence tier. Standalone CLI cache
-  commands use their separate `cli-disk-tier` feature.
+- The library has no file-backed persistence tier. The separate
+  `tinyjuice-cli` package composes the file backend for standalone cache
+  commands.
+- The CLI stores the original CCR write time in a sibling metadata blob because
+  the BlobStore port has no caller-supplied timestamp. TTLs use the remaining
+  relative duration when the content and metadata blobs are written separately,
+  so their backend expiration times can differ by a small write-time skew;
+  collection ordering and age checks use the preserved original timestamp.
 - Store calls may block, so a host must not call them from a single-threaded
   runtime that also drives the store's transport.
 

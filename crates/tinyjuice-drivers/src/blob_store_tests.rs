@@ -1,26 +1,36 @@
 use super::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use tinystoragedrivers_core::{Capability, MemoryStorage, Scope, StorageBackend};
+use tinystoragedrivers_api::BlobStore;
+use tinystoragedrivers_types::{Capability, ErrorKind, Scope};
 
 use crate::faulty::Faulty;
 
-fn clocked() -> (MemoryStorage, Arc<AtomicU64>) {
-    let now = Arc::new(AtomicU64::new(1_000));
-    let reading = Arc::clone(&now);
+static TEST_NOW: AtomicU64 = AtomicU64::new(1_000);
+static CLOCK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn test_now_ms() -> u64 {
+    TEST_NOW.load(Ordering::SeqCst)
+}
+
+fn clocked() -> (Arc<dyn BlobStore>, &'static AtomicU64) {
+    let scope = Scope::new("local").unwrap();
     (
-        MemoryStorage::with_clock(Arc::new(move || reading.load(Ordering::SeqCst))),
-        now,
+        Arc::new(tinystoragedrivers_blob::MemoryBlobStore::with_clock(
+            scope,
+            test_now_ms,
+        )),
+        &TEST_NOW,
     )
 }
 
-fn handle(storage: &MemoryStorage) -> Arc<dyn BlobStore> {
-    Arc::clone(storage.for_scope(&Scope::local()).unwrap().blobs())
+fn handle() -> Arc<dyn BlobStore> {
+    Arc::clone(tinystoragedrivers_testkit::memory_storage(&Scope::new("local").unwrap()).blobs())
 }
 
-fn faulty(storage: &MemoryStorage, ttl: bool) -> (Arc<dyn BlobStore>, Arc<AtomicBool>) {
+fn faulty(ttl: bool) -> (Arc<dyn BlobStore>, Arc<AtomicBool>) {
     let fail = Arc::new(AtomicBool::new(false));
     let blobs: Arc<dyn BlobStore> = Arc::new(Faulty {
-        inner: handle(storage),
+        inner: handle(),
         fail: Arc::clone(&fail),
         ttl,
     });
@@ -29,16 +39,16 @@ fn faulty(storage: &MemoryStorage, ttl: bool) -> (Arc<dyn BlobStore>, Arc<Atomic
 
 #[test]
 fn an_original_round_trips_under_its_content_token() {
-    let storage = MemoryStorage::new();
-    let store = BlobCcrStore::new(handle(&storage), None).unwrap();
+    let blobs = handle();
+    let store = BlobCcrStore::new(Arc::clone(&blobs), None).unwrap();
     let put = store.put("hello world");
     assert!(put.retained());
     assert_eq!(put.token(), short_hash("hello world"));
     assert_eq!(store.get(put.token()).as_deref(), Some("hello world"));
-    let listed = tinystoragedrivers_core::Blocking::new()
+    let listed = crate::blocking::Blocking::new()
         .unwrap()
         .run({
-            let blobs = handle(&storage);
+            let blobs = Arc::clone(&blobs);
             async move { blobs.list(CCR_PREFIX).await }
         })
         .unwrap()
@@ -48,9 +58,39 @@ fn an_original_round_trips_under_its_content_token() {
 }
 
 #[test]
+fn released_blob_keys_are_rekeyed_before_the_store_reads_them() {
+    let blobs = handle();
+    let token = short_hash("released original");
+    let (key, content_type, bytes) = tinyjuice_bus::storage::migrate_ccr_blob(
+        format!("{}{token}", tinyjuice_bus::storage::LEGACY_CCR_PREFIX),
+        Some(CONTENT_TYPE.to_owned()),
+        b"released original".to_vec(),
+    )
+    .expect("legacy CCR key migrates");
+    crate::blocking::Blocking::new()
+        .unwrap()
+        .run({
+            let blobs = Arc::clone(&blobs);
+            let key = key.clone();
+            async move { blobs.put(&key, bytes, content_type.as_deref()).await }
+        })
+        .unwrap()
+        .unwrap();
+
+    let store = BlobCcrStore::new(Arc::clone(&blobs), None).unwrap();
+    assert_eq!(store.get(&token).as_deref(), Some("released original"));
+    let keys = crate::blocking::Blocking::new()
+        .unwrap()
+        .run(async move { blobs.list(&format!("{CCR_PREFIX}/")).await })
+        .unwrap()
+        .unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].key, key);
+}
+
+#[test]
 fn identical_content_is_idempotent_and_distinct_content_is_separate() {
-    let storage = MemoryStorage::new();
-    let store = BlobCcrStore::new(handle(&storage), None).unwrap();
+    let store = BlobCcrStore::new(handle(), None).unwrap();
     let a = store.put("same");
     let b = store.put("same");
     let c = store.put("other");
@@ -61,8 +101,10 @@ fn identical_content_is_idempotent_and_distinct_content_is_separate() {
 
 #[test]
 fn an_original_expires_when_its_ttl_has_elapsed() {
-    let (storage, now) = clocked();
-    let store = BlobCcrStore::new(handle(&storage), Some(Duration::from_millis(500))).unwrap();
+    let _guard = CLOCK_TEST_LOCK.lock().unwrap();
+    let (blobs, now) = clocked();
+    now.store(1_000, Ordering::SeqCst);
+    let store = BlobCcrStore::new(blobs, Some(Duration::from_millis(500))).unwrap();
     let put = store.put("short lived");
     assert!(put.retained());
     now.store(1_499, Ordering::SeqCst);
@@ -73,8 +115,10 @@ fn an_original_expires_when_its_ttl_has_elapsed() {
 
 #[test]
 fn re_offloading_restarts_the_lifetime() {
-    let (storage, now) = clocked();
-    let store = BlobCcrStore::new(handle(&storage), Some(Duration::from_millis(500))).unwrap();
+    let _guard = CLOCK_TEST_LOCK.lock().unwrap();
+    let (blobs, now) = clocked();
+    now.store(1_000, Ordering::SeqCst);
+    let store = BlobCcrStore::new(blobs, Some(Duration::from_millis(500))).unwrap();
     let put = store.put("refreshed");
     now.store(1_400, Ordering::SeqCst);
     store.put("refreshed");
@@ -86,8 +130,7 @@ fn re_offloading_restarts_the_lifetime() {
 
 #[test]
 fn a_zero_ttl_is_never_advertised_as_retained() {
-    let storage = MemoryStorage::new();
-    let store = BlobCcrStore::new(handle(&storage), Some(Duration::ZERO)).unwrap();
+    let store = BlobCcrStore::new(handle(), Some(Duration::ZERO)).unwrap();
     let put = store.put("gone on arrival");
     assert!(!put.retained());
     assert_eq!(store.get(put.token()), None);
@@ -95,20 +138,15 @@ fn a_zero_ttl_is_never_advertised_as_retained() {
 
 #[test]
 fn a_ttl_needs_a_handle_that_can_expire_blobs() {
-    let storage = MemoryStorage::new();
-    let (blobs, _) = faulty(&storage, false);
+    let (blobs, _) = faulty(false);
     let err = BlobCcrStore::new(Arc::clone(&blobs), Some(Duration::from_secs(5))).unwrap_err();
-    assert_eq!(
-        err.kind(),
-        tinystoragedrivers_core::ErrorKind::Unsupported(Capability::BlobTtl)
-    );
+    assert_eq!(err.kind(), ErrorKind::Unsupported(Capability::BlobTtl));
     assert!(BlobCcrStore::new(blobs, None).is_ok());
 }
 
 #[test]
 fn malformed_tokens_never_reach_the_backend() {
-    let storage = MemoryStorage::new();
-    let store = BlobCcrStore::new(handle(&storage), None).unwrap();
+    let store = BlobCcrStore::new(handle(), None).unwrap();
     for token in [
         "",
         "../../state/config.toml",
@@ -124,8 +162,7 @@ fn malformed_tokens_never_reach_the_backend() {
 
 #[test]
 fn ranges_clamp_like_the_in_memory_store() {
-    let storage = MemoryStorage::new();
-    let store = BlobCcrStore::new(handle(&storage), None).unwrap();
+    let store = BlobCcrStore::new(handle(), None).unwrap();
     let put = store.put("one\ntwo\nthree\nfour");
     let t = put.token();
     assert_eq!(
@@ -145,8 +182,7 @@ fn ranges_clamp_like_the_in_memory_store() {
 
 #[test]
 fn non_ascii_bytes_round_trip_and_ranges_stay_on_char_boundaries() {
-    let storage = MemoryStorage::new();
-    let store = BlobCcrStore::new(handle(&storage), None).unwrap();
+    let store = BlobCcrStore::new(handle(), None).unwrap();
     let put = store.put("héllo");
     assert_eq!(store.get(put.token()).as_deref(), Some("héllo"));
     // byte 2 is inside the two-byte 'é'
@@ -160,8 +196,7 @@ fn non_ascii_bytes_round_trip_and_ranges_stay_on_char_boundaries() {
 
 #[test]
 fn delete_reports_whether_the_original_existed() {
-    let storage = MemoryStorage::new();
-    let store = BlobCcrStore::new(handle(&storage), None).unwrap();
+    let store = BlobCcrStore::new(handle(), None).unwrap();
     let put = store.put("to delete");
     assert!(store.delete(put.token()));
     assert!(!store.delete(put.token()));
@@ -170,8 +205,7 @@ fn delete_reports_whether_the_original_existed() {
 
 #[test]
 fn backend_failures_are_not_retained_and_read_as_absent() {
-    let storage = MemoryStorage::new();
-    let (blobs, fail) = faulty(&storage, true);
+    let (blobs, fail) = faulty(true);
     let store = BlobCcrStore::new(blobs, Some(Duration::from_secs(60))).unwrap();
     let ok = store.put("stored while healthy");
     assert!(ok.retained());
@@ -188,55 +222,20 @@ fn backend_failures_are_not_retained_and_read_as_absent() {
 
 #[test]
 fn a_plain_put_path_is_used_without_a_ttl_even_when_failing_ttl_calls() {
-    let storage = MemoryStorage::new();
-    let (blobs, _) = faulty(&storage, false);
+    let (blobs, _) = faulty(false);
     let store = BlobCcrStore::new(blobs, None).unwrap();
     assert!(store.put("no lifetime").retained());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn it_works_from_inside_a_tokio_runtime() {
-    let storage = MemoryStorage::new();
-    let store = BlobCcrStore::new(handle(&storage), None).unwrap();
+    let store = BlobCcrStore::new(handle(), None).unwrap();
     let put = store.put("inside runtime");
     assert_eq!(store.get(put.token()).as_deref(), Some("inside runtime"));
 }
 
 #[test]
 fn debug_hides_the_handle() {
-    let storage = MemoryStorage::new();
-    let store = BlobCcrStore::new(handle(&storage), None).unwrap();
+    let store = BlobCcrStore::new(handle(), None).unwrap();
     assert!(format!("{store:?}").starts_with("BlobCcrStore"));
-}
-
-#[tokio::test]
-async fn a_migrated_original_is_readable_through_the_store() {
-    use tinyjuice::cache::store::{CcrStore, short_hash};
-    let backend = MemoryStorage::new();
-    let storage = backend.for_scope(&Scope::local()).unwrap();
-    let token = short_hash("legacy original");
-    storage
-        .blobs()
-        .put(
-            &format!("tinyjuice_ccr/{token}"),
-            b"legacy original".to_vec(),
-            Some("text/plain; charset=utf-8"),
-        )
-        .await
-        .unwrap();
-    tinystoragedrivers_core::schema::Registry::compose([crate::storage_schema()])
-        .unwrap()
-        .migrate(
-            &storage,
-            &tinystoragedrivers_core::schema::MigrateOptions::new(),
-        )
-        .await
-        .unwrap();
-
-    let blobs = std::sync::Arc::clone(storage.blobs());
-    let got =
-        tokio::task::spawn_blocking(move || BlobCcrStore::new(blobs, None).unwrap().get(&token))
-            .await
-            .unwrap();
-    assert_eq!(got.as_deref(), Some("legacy original"));
 }

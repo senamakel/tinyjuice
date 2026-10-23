@@ -1,5 +1,5 @@
 [package]
-rust-version = "1.88"
+rust-version = "1.90"
 name = "tinyjuice-bus"
 version = "0.11.0"
 edition = "2024"
@@ -19,14 +19,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Shared REPL error vocabulary; no execution dependencies.
 thiserror = "2"
-# Optional (`storage` feature, off by default). Storage ports only (no I/O or runtime of its own): the schema the host composes
-# lives in the contract so the host never links the implementation crate.
-tinystoragedrivers-core = { version = "1.0.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v1.0.0", default-features = false, optional = true }
+tinystoragedrivers-types = { version = "2.1.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456" }
 
 [features]
 default = []
-# `storage_schema()` for the host's schema composition. Hosts enable this.
-storage = ["dep:tinystoragedrivers-core"]
 
 [dev-dependencies]
 # The migration tests run the schema over the in-memory backend.

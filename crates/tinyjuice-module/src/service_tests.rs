@@ -363,3 +363,152 @@ async fn setup_serves_detection_and_forwards_model_calls_to_the_host() {
     tinyjuice::llm::configure_callback(None);
     broker_task.abort();
 }
+
+#[tokio::test]
+async fn import_savings_at_uses_only_its_request_scoped_storage_address() {
+    use tinybus::broker::Broker;
+    use tinybus::transport::memory::MemoryBus;
+    use tinyjuice_bus::savings::{
+        ImportSavingsAtRequest, SAVINGS_DOC_ID, SavingsAggregate, SavingsBucket,
+        StorageCallbackAddress,
+    };
+    use tinyjuice_bus::storage::SAVINGS_COLLECTION;
+    use tinystoragedrivers_api::StorageBackend;
+    use tinystoragedrivers_busproxy::{
+        INVOCATION_OBJECT_ROOT, PerCallerEndpoint, StorageAddress, StorageServer, serve,
+        serve_at_address,
+    };
+    use tinystoragedrivers_testkit::MemoryBackend;
+    use tinystoragedrivers_types::Scope;
+
+    let bus = MemoryBus::new();
+    let broker_task = Broker::new().spawn(bus.clone());
+    let host = Connection::connect(bus.connect().await.unwrap())
+        .await
+        .unwrap();
+    let backend = Arc::new(MemoryBackend::new());
+    let ordinary_backend: Arc<dyn StorageBackend> = backend.clone();
+    let ordinary_endpoint = PerCallerEndpoint::new({
+        let backend = Arc::clone(&ordinary_backend);
+        move |_| {
+            let storage = backend.for_scope(&Scope::new("ordinary").ok()?).ok()?;
+            Some(StorageServer::new(storage))
+        }
+    });
+    let _ordinary_server = serve(&host, Arc::new(ordinary_endpoint)).await.unwrap();
+
+    let callback_backend: Arc<dyn StorageBackend> = backend.clone();
+    let callback_scope = Scope::new("invocation").unwrap();
+    let callback = callback_backend.for_scope(&callback_scope).unwrap();
+    let callback_docs = Arc::clone(callback.documents());
+    let address = StorageAddress::try_new(
+        host.unique_name().unwrap(),
+        tinybus::ObjectPath::new(format!("{INVOCATION_OBJECT_ROOT}/juice_test")).unwrap(),
+    )
+    .unwrap();
+    let _callback_server = serve_at_address(
+        &host,
+        address.clone(),
+        Arc::new(PerCallerEndpoint::new(move |_| {
+            Some(StorageServer::new(callback.clone()))
+        })),
+    )
+    .await
+    .unwrap();
+
+    let module = Connection::connect(bus.connect().await.unwrap())
+        .await
+        .unwrap();
+    let savings = crate::savings_store::Savings::new();
+    let initial: SavingsAggregate = savings.stats(Some(&module)).await;
+    assert_eq!(initial.total.events, 0);
+    let aggregate = SavingsAggregate {
+        total: SavingsBucket {
+            events: 2,
+            original_tokens: 20,
+            compacted_tokens: 8,
+            tokens_saved: 12,
+            cost_saved_usd: 0.25,
+        },
+        ..Default::default()
+    };
+    let imported = import_savings_at(
+        &savings,
+        Some(&module),
+        ImportSavingsAtRequest {
+            aggregate,
+            callback: StorageCallbackAddress {
+                host: address.host().to_string(),
+                object_root: address.object_root().to_string(),
+            },
+        },
+    )
+    .await
+    .unwrap();
+    assert!(imported);
+
+    assert_eq!(
+        savings.stats(Some(&module)).await.total.events,
+        0,
+        "request-scoped import state must not become ordinary module state"
+    );
+
+    let ordinary = backend.for_scope(&Scope::new("ordinary").unwrap()).unwrap();
+    let stored = ordinary
+        .documents()
+        .get(SAVINGS_COLLECTION, SAVINGS_DOC_ID)
+        .await
+        .unwrap();
+    assert!(
+        stored.is_none(),
+        "the request port does not replace the normal port"
+    );
+    assert!(
+        callback_docs
+            .get(SAVINGS_COLLECTION, SAVINGS_DOC_ID)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    broker_task.abort();
+}
+
+#[tokio::test]
+async fn import_savings_at_rejects_non_unique_hosts_and_non_invocation_roots() {
+    use tinybus::broker::Broker;
+    use tinybus::transport::memory::MemoryBus;
+    use tinyjuice_bus::savings::{
+        ImportSavingsAtRequest, SavingsAggregate, StorageCallbackAddress,
+    };
+
+    let bus = MemoryBus::new();
+    let broker_task = Broker::new().spawn(bus.clone());
+    let module = Connection::connect(bus.connect().await.unwrap())
+        .await
+        .unwrap();
+    let savings = crate::savings_store::Savings::new();
+
+    let invalid_addresses = [
+        StorageCallbackAddress {
+            host: "ai.example.Storage".into(),
+            object_root: "/ai/tinyhumans/tinystorage/Invocation/import-1".into(),
+        },
+        StorageCallbackAddress {
+            host: ":1.7".into(),
+            object_root: "/ai/tinyhumans/tinystorage/Other/import-1".into(),
+        },
+    ];
+    for callback in invalid_addresses {
+        let result = import_savings_at(
+            &savings,
+            Some(&module),
+            ImportSavingsAtRequest {
+                aggregate: SavingsAggregate::default(),
+                callback,
+            },
+        )
+        .await;
+        assert!(result.is_err(), "invalid destination must be rejected");
+    }
+    broker_task.abort();
+}

@@ -3,7 +3,15 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn tinyjuice() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_tinyjuice-reduce"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tinyjuice-reduce"));
+    command.current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    command
+}
+
+fn write_legacy_entry(directory: &std::path::Path, content: &str) -> String {
+    let token = tinyjuice::cache::short_hash(content);
+    fs::write(directory.join(&token), content).expect("write legacy CCR entry");
+    token
 }
 
 #[test]
@@ -183,7 +191,7 @@ fn wrap_preserves_wrapped_exit_code() {
 #[test]
 fn ls_lists_only_token_shaped_store_entries() {
     let dir = tempfile::tempdir().expect("temp store");
-    fs::write(dir.path().join("0123456789abcdef0123456789abcdef"), "one").expect("write token");
+    let token = write_legacy_entry(dir.path(), "one");
     fs::write(dir.path().join("not-a-token"), "ignored").expect("write ignored");
 
     let output = tinyjuice()
@@ -194,18 +202,22 @@ fn ls_lists_only_token_shaped_store_entries() {
     assert!(output.status.success(), "{output:#?}");
     assert_eq!(
         String::from_utf8(output.stdout).expect("utf8 stdout"),
-        "0123456789abcdef0123456789abcdef\n"
+        format!("{token}\n")
     );
 }
 
 #[test]
 fn cat_reads_token_from_explicit_store_dir() {
     let dir = tempfile::tempdir().expect("temp store");
-    let token = "0123456789abcdef0123456789abcdef";
-    fs::write(dir.path().join(token), "alpha\nbeta\ngamma\n").expect("write token");
+    let token = write_legacy_entry(dir.path(), "alpha\nbeta\ngamma\n");
 
     let output = tinyjuice()
-        .args(["cat", "--store-dir", &dir.path().to_string_lossy(), token])
+        .args([
+            "cat",
+            "--store-dir",
+            &dir.path().to_string_lossy(),
+            token.as_str(),
+        ])
         .output()
         .expect("run tinyjuice cat");
 
@@ -219,8 +231,7 @@ fn cat_reads_token_from_explicit_store_dir() {
 #[test]
 fn cat_reads_line_range_from_explicit_store_dir() {
     let dir = tempfile::tempdir().expect("temp store");
-    let token = "0123456789abcdef0123456789abcdef";
-    fs::write(dir.path().join(token), "alpha\nbeta\ngamma\ndelta\n").expect("write token");
+    let token = write_legacy_entry(dir.path(), "alpha\nbeta\ngamma\ndelta\n");
 
     let output = tinyjuice()
         .args([
@@ -229,7 +240,7 @@ fn cat_reads_line_range_from_explicit_store_dir() {
             &dir.path().to_string_lossy(),
             "--lines",
             "1:3",
-            token,
+            token.as_str(),
         ])
         .output()
         .expect("run tinyjuice cat lines");
@@ -244,8 +255,7 @@ fn cat_reads_line_range_from_explicit_store_dir() {
 #[test]
 fn cat_reads_byte_range_from_explicit_store_dir() {
     let dir = tempfile::tempdir().expect("temp store");
-    let token = "0123456789abcdef0123456789abcdef";
-    fs::write(dir.path().join(token), "alpha beta gamma").expect("write token");
+    let token = write_legacy_entry(dir.path(), "alpha beta gamma");
 
     let output = tinyjuice()
         .args([
@@ -254,7 +264,7 @@ fn cat_reads_byte_range_from_explicit_store_dir() {
             &dir.path().to_string_lossy(),
             "--bytes",
             "6:10",
-            token,
+            token.as_str(),
         ])
         .output()
         .expect("run tinyjuice cat bytes");
@@ -269,8 +279,7 @@ fn cat_reads_byte_range_from_explicit_store_dir() {
 #[test]
 fn cat_rejects_multiple_range_flags() {
     let dir = tempfile::tempdir().expect("temp store");
-    let token = "0123456789abcdef0123456789abcdef";
-    fs::write(dir.path().join(token), "alpha\nbeta\n").expect("write token");
+    let token = write_legacy_entry(dir.path(), "alpha\nbeta\n");
 
     let output = tinyjuice()
         .args([
@@ -281,7 +290,7 @@ fn cat_rejects_multiple_range_flags() {
             "0:1",
             "--bytes",
             "0:5",
-            token,
+            token.as_str(),
         ])
         .output()
         .expect("run tinyjuice cat conflicting ranges");
@@ -297,9 +306,8 @@ fn cat_rejects_multiple_range_flags() {
 #[test]
 fn stats_reports_metadata_for_explicit_store_dir() {
     let dir = tempfile::tempdir().expect("temp store");
-    fs::write(dir.path().join("0123456789abcdef0123456789abcdef"), "one").expect("write token");
-    fs::write(dir.path().join("fedcba9876543210fedcba9876543210"), "three")
-        .expect("write second token");
+    write_legacy_entry(dir.path(), "one");
+    write_legacy_entry(dir.path(), "three");
     fs::write(dir.path().join("not-a-token"), "ignored raw content").expect("write ignored");
     fs::create_dir(dir.path().join("subdir")).expect("create ignored dir");
 

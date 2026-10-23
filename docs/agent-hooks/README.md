@@ -12,23 +12,11 @@ Use `tinyjuice update <host>` to refresh an installed hook and
 
 ## Install The CLI
 
-Install from crates.io:
+Install the CLI from a local TinyJuice checkout (the CLI package is not
+published separately):
 
 ```sh
-cargo install tinyjuice --features cli-disk-tier --locked
-```
-
-For development builds, install from Git:
-
-```sh
-cargo install --git https://github.com/tinyhumansai/tinyjuice \
-  --features cli-disk-tier --locked --bin tinyjuice
-```
-
-Or install the exact code in a local checkout:
-
-```sh
-cargo install --path . --features cli-disk-tier --locked --bin tinyjuice
+cargo install --path crates/tinyjuice-cli --locked --bin tinyjuice
 ```
 
 Make sure Cargo's bin directory is on `PATH` before installing hooks:

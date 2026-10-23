@@ -1,5 +1,5 @@
 [package]
-rust-version = "1.88"
+rust-version = "1.90"
 name = "tinyjuice-drivers"
 version = "0.9.0"
 edition = "2024"
@@ -12,11 +12,15 @@ repository = "https://github.com/tinyhumansai/tinyjuice"
 publish = false
 
 [dependencies]
-tinyjuice-bus = { path = "../tinyjuice-bus", features = ["storage"] }
+tinyjuice-bus = { path = "../tinyjuice-bus" }
 tinyjuice = { path = "../..", default-features = false }
-tinystoragedrivers-core = { version = "1.0.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v1.0.0", features = ["blocking"] }
+tinystoragedrivers-api = { version = "2.1.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456" }
+tinystoragedrivers-types = { version = "2.1.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456" }
 log = "0.4"
+tokio = { version = "1", features = ["rt"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 async-trait = "0.1"
+tinystoragedrivers-testkit = { version = "2.1.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456" }
+tinystoragedrivers-blob = { version = "2.1.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456" }

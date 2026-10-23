@@ -119,6 +119,67 @@ fn host_cli_help_templates_and_gc_are_usable() {
 }
 
 #[test]
+fn reduce_json_help_and_argument_errors_do_not_open_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache_path = dir.path().join("not-a-directory");
+    std::fs::write(&cache_path, "not a directory").unwrap();
+
+    for (args, expected_success, expected_output) in [
+        (&["reduce-json", "--help"][..], true, "Usage:"),
+        (
+            &["reduce-json", "--unknown"][..],
+            false,
+            "unknown reduce-json flag",
+        ),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_tinyjuice"))
+            .args(args)
+            .env("TINYJUICE_CCR_DIR", &cache_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        assert_eq!(out.status.success(), expected_success, "{args:?}: {out:?}");
+        let output = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(output.contains(expected_output), "{args:?}: {output}");
+        assert!(!output.contains("not a directory"), "{args:?}: {output}");
+    }
+}
+
+#[test]
+fn retrieve_argument_errors_do_not_open_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache_path = dir.path().join("not-a-directory");
+    std::fs::write(&cache_path, "not a directory").unwrap();
+
+    for (args, expected_error) in [
+        (&["retrieve"][..], "retrieve requires a CCR token"),
+        (
+            &["retrieve", "one", "two"][..],
+            "retrieve accepts exactly one CCR token",
+        ),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_tinyjuice"))
+            .args(args)
+            .env("TINYJUICE_CCR_DIR", &cache_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{args:?}: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(expected_error), "{args:?}: {stderr}");
+        assert!(!stderr.contains("not a directory"), "{args:?}: {stderr}");
+    }
+}
+
+#[test]
 fn host_cli_install_update_and_uninstall_preserve_settings() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
@@ -210,6 +271,34 @@ fn host_cli_reads_json_files_and_accepts_hooks_without_output() {
         assert!(out.status.success(), "{out:?}");
         assert!(out.stdout.is_empty());
     }
+}
+
+#[test]
+fn post_tool_hook_skips_compression_when_persistent_cache_storage_cannot_open() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("ccr"), "not a directory").unwrap();
+    let output = (0..200)
+        .map(|index| format!("\tmodified:   src/file_{index}.rs"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let payload = serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git status"},
+        "tool_response": {"output": output, "exitCode": 0}
+    })
+    .to_string();
+
+    let out = invoke(dir.path(), &["codex-post-tool-use"], &payload);
+
+    assert!(
+        out.status.success(),
+        "cache setup must not fail the hook: {out:?}"
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "without durable recovery, the hook must leave host output unchanged"
+    );
 }
 
 #[test]

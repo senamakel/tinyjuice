@@ -13,7 +13,8 @@ use tinyjuice_bus::savings::{
     RecordSavingsRequest, SAVINGS_DOC_ID, SavingsAggregate, StoredSavings,
 };
 use tinyjuice_bus::storage::SAVINGS_COLLECTION;
-use tinystoragedrivers_core::{DocumentStore, DocumentStoreExt, Precondition};
+use tinystoragedrivers_api::{DocumentStore, DocumentStoreExt, Storage};
+use tinystoragedrivers_types::Precondition;
 
 /// Working state behind one lock, so load, change and write never interleave.
 #[derive(Default)]
@@ -107,6 +108,52 @@ impl Savings {
         Ok(true)
     }
 
+    /// Adopt a legacy snapshot through a storage handle supplied for this one
+    /// call. This handle is deliberately not cached in `State`: hosts use it
+    /// for claim-bound imports, and its authority ends when the call returns.
+    pub(crate) async fn import_at(
+        &self,
+        _connection: Option<&Connection>,
+        storage: &Storage,
+        legacy: SavingsAggregate,
+    ) -> BusResult<bool> {
+        let mut state = self.state.lock().await;
+        let docs = storage.documents();
+        let stored = docs
+            .get_as::<StoredSavings>(SAVINGS_COLLECTION, SAVINGS_DOC_ID)
+            .await
+            .map_err(|error| {
+                tinybus::Error::failed(format!("savings could not be read: {error}"))
+            })?;
+        if stored
+            .as_ref()
+            .is_some_and(|stored| stored.doc.total.events != 0)
+        {
+            log::debug!("[tinyjuice_module][savings] import skipped: totals exist");
+            return Ok(false);
+        }
+
+        // Import is a read-modify-write operation. Preserve the observed
+        // document version (or absence) so a concurrent normal savings write
+        // cannot be overwritten by this legacy snapshot.
+        let precondition = stored.map_or(Precondition::Absent, |stored| {
+            Precondition::Version(stored.version)
+        });
+
+        let body = StoredSavings::from_aggregate(&legacy, now_ms());
+        docs.put_as(SAVINGS_COLLECTION, SAVINGS_DOC_ID, &body, precondition)
+            .await
+            .map_err(|error| {
+                tinybus::Error::failed(format!("savings could not be written: {error}"))
+            })?;
+
+        // The callback port is invocation-scoped and may address a different
+        // document from the ordinary port. Invalidate the cached ledger so the
+        // next ordinary operation reloads only through the ordinary port.
+        state.loaded = false;
+        Ok(true)
+    }
+
     /// Reach the document port and reconcile the ledger with its document.
     ///
     /// Changes made before the document could be read are kept: they are
@@ -116,11 +163,11 @@ impl Savings {
         if state.loaded {
             return;
         }
-        let Some(connection) = connection else {
-            state.loaded = true;
-            return;
-        };
         if state.docs.is_none() {
+            let Some(connection) = connection else {
+                state.loaded = true;
+                return;
+            };
             if state
                 .last_connect_failure
                 .is_some_and(|at| at.elapsed() < self.cooldown)
@@ -144,9 +191,11 @@ impl Savings {
             }
         };
         if let Some(stored) = stored.filter(|_| !state.reset_early) {
-            let early = self.ledger.stats();
+            let early = state.dirty.then(|| self.ledger.stats());
             self.ledger.replace(stored);
-            self.ledger.absorb(&early);
+            if let Some(early) = early {
+                self.ledger.absorb(&early);
+            }
         }
         state.loaded = true;
         if state.dirty {

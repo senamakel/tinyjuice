@@ -225,7 +225,9 @@ fn install_and_uninstall_dispatch_with_explicit_host_paths() {
 #[test]
 fn store_inventory_counts_only_tokens_and_stats_formats_both_modes() {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("a".repeat(32)), "original").unwrap();
+    let content = "original";
+    let token = tinyjuice::cache::short_hash(content);
+    fs::write(dir.path().join(token), content).unwrap();
     fs::write(dir.path().join("notes"), "unrelated").unwrap();
     fs::create_dir(dir.path().join("nested")).unwrap();
     let inventory = read_ccr_store_inventory(dir.path()).unwrap();

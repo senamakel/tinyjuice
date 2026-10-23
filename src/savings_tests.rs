@@ -2,6 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 
+static RECORDER_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 #[test]
 fn rich_record_serializes_only_metadata() {
     let record =
@@ -45,6 +47,7 @@ fn fixture_benchmark_records_are_labeled_separately() {
 
 #[test]
 fn record_event_invokes_rich_and_legacy_recorders() {
+    let _guard = RECORDER_TEST_LOCK.lock().expect("recorder test lock");
     let rich_records = Arc::new(Mutex::new(Vec::new()));
     let legacy_records = Arc::new(Mutex::new(Vec::new()));
 
@@ -95,12 +98,16 @@ fn record_event_invokes_rich_and_legacy_recorders() {
 
 #[test]
 fn no_recorder_is_a_noop() {
+    let _guard = RECORDER_TEST_LOCK.lock().expect("recorder test lock");
     configure_recorder(None);
+    configure_record_recorder(None);
     record(ContentKind::Json, CompressorKind::SmartCrusher, 100, 25);
 }
 
 #[test]
 fn configured_recorder_receives_compaction_event() {
+    let _guard = RECORDER_TEST_LOCK.lock().expect("recorder test lock");
+    configure_record_recorder(None);
     let events = Arc::new(Mutex::new(Vec::new()));
     let captured = Arc::clone(&events);
     configure_recorder(Some(Arc::new(

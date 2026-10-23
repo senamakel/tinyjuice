@@ -10,6 +10,10 @@ use tinyjuice::{
     load_builtin_rules, reduce_execution_with_rules, reduce_json_str, verify_rule_fixtures,
     verify_rules,
 };
+use tinyjuice_drivers::CCR_PREFIX;
+
+#[path = "../storage.rs"]
+mod storage;
 
 const TINYJUICE_MANAGED_BEGIN: &str = "<!-- tinyjuice-managed:start -->";
 const TINYJUICE_MANAGED_END: &str = "<!-- tinyjuice-managed:end -->";
@@ -747,7 +751,12 @@ fn run_cat(args: &[String]) -> Result<(), String> {
         return Err("cat token must be a 32-character hex CCR token".to_owned());
     }
 
-    tinyjuice::cache::enable_disk_tier(store_dir);
+    tinyjuice::cache::configure(
+        tinyjuice::cache::DEFAULT_MAX_ENTRIES,
+        tinyjuice::cache::DEFAULT_MAX_BYTES,
+        None,
+    );
+    storage::configure(&store_dir, storage::configured_ttl(), None)?;
     let content = match range {
         Some((unit, (start, end))) => tinyjuice::cache::retrieve_range(&token, start, end, unit),
         None => tinyjuice::cache::retrieve(&token),
@@ -809,37 +818,24 @@ struct CcrStoreEntry {
 }
 
 fn read_ccr_store_inventory(store_dir: &Path) -> Result<CcrStoreInventory, String> {
-    let mut entries = Vec::new();
-    let mut ignored_entries = 0;
-
-    for entry in fs::read_dir(store_dir)
-        .map_err(|error| format!("failed to read {}: {error}", store_dir.display()))?
-    {
-        let entry = entry.map_err(|error| format!("failed to read store entry: {error}"))?;
-        if !entry
-            .file_type()
-            .map_err(|error| format!("failed to inspect store entry: {error}"))?
-            .is_file()
-        {
-            ignored_entries += 1;
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if is_cli_ccr_token(&name) {
-            let bytes = entry
-                .metadata()
-                .map_err(|error| format!("failed to inspect store entry {name}: {error}"))?
-                .len();
-            entries.push(CcrStoreEntry { token: name, bytes });
-        } else {
-            ignored_entries += 1;
-        }
-    }
-
-    entries.sort_by(|left, right| left.token.cmp(&right.token));
+    let inventory = storage::inventory(store_dir, storage::configured_ttl())?;
+    let entries = inventory
+        .entries
+        .into_iter()
+        .filter_map(|entry| {
+            let token = entry
+                .key
+                .strip_prefix(&format!("{CCR_PREFIX}/"))?
+                .to_owned();
+            is_cli_ccr_token(&token).then_some(CcrStoreEntry {
+                token,
+                bytes: entry.len,
+            })
+        })
+        .collect();
     Ok(CcrStoreInventory {
         entries,
-        ignored_entries,
+        ignored_entries: inventory.ignored_entries,
     })
 }
 
@@ -1305,5 +1301,5 @@ fn print_uninstall_usage() {
 }
 
 #[cfg(test)]
-#[path = "main_tests.rs"]
+#[path = "tinyjuice-reduce/tinyjuice_reduce_tests.rs"]
 mod tests;

@@ -9,8 +9,7 @@
 //!
 //! Process-global and bounded by **both** an entry count and a total byte cap,
 //! with an optional TTL. Keyed by content hash, so re-offloading identical
-//! content is idempotent. Hosted persistence is supplied through [`CcrStore`];
-//! only standalone CLI builds can opt into a filesystem tier.
+//! content is idempotent. Persistence is supplied through [`CcrStore`].
 
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
@@ -288,12 +287,12 @@ pub fn offload_checked(content: &str) -> (String, bool) {
 /// Like [`offload_checked`] but takes the precomputed `short_hash(content)`
 /// so callers that already have it (e.g. the router builds the footer from the
 /// hash before deciding to store) don't pay for a second SHA-256 pass.
-/// Returns whether the original was retained (memory or disk).
+/// Returns whether the original was retained (memory or the host's durable store).
 pub fn offload_checked_with_hash(hash: &str, content: &str) -> bool {
     debug_assert_eq!(hash, short_hash(content), "hash must match content");
-    let (max_entries, max_bytes, ttl) = {
+    let (max_entries, max_bytes) = {
         let l = limits().read().unwrap_or_else(|p| p.into_inner());
-        (l.max_entries, l.max_bytes, l.ttl)
+        (l.max_entries, l.max_bytes)
     };
     let mem_retained = global().lock().unwrap_or_else(|p| p.into_inner()).insert(
         hash.to_string(),
@@ -302,16 +301,6 @@ pub fn offload_checked_with_hash(hash: &str, content: &str) -> bool {
         max_bytes,
     );
 
-    // Mirror to the standalone CLI disk tier when enabled (best-effort). A successful write
-    // write keeps the original recoverable even when it was too big for memory.
-    // Rewriting an existing hash intentionally refreshes the file mtime, which
-    // is the TTL clock for disk-backed CCR entries.
-    #[cfg(feature = "cli-disk-tier")]
-    let disk_retained = crate::cache::disk_tier::put(hash, content, ttl);
-    #[cfg(not(feature = "cli-disk-tier"))]
-    let disk_retained = false;
-    #[cfg(not(feature = "cli-disk-tier"))]
-    let _ = ttl;
     // Mirror to the host-provided durable tier (best-effort).
     let durable = durable_tier()
         .read()
@@ -329,7 +318,7 @@ pub fn offload_checked_with_hash(hash: &str, content: &str) -> bool {
         }
         put.retained() && same_token
     });
-    mem_retained || disk_retained || durable_retained
+    mem_retained || durable_retained
 }
 
 /// True if `hash` is a well-formed CCR token (exactly the generated hex digest).
@@ -340,7 +329,7 @@ pub(super) fn is_valid_token(hash: &str) -> bool {
 }
 
 /// Retrieve a previously-offloaded original by hash, if still available
-/// (memory first, then a host durable store or the standalone CLI disk tier).
+/// (memory first, then a host durable store).
 /// Honours the in-memory TTL; durable stores own their own expiry.
 pub fn retrieve(hash: &str) -> Option<String> {
     // Reject anything that isn't the generated token shape up front.
@@ -367,13 +356,6 @@ pub fn retrieve(hash: &str) -> Option<String> {
         .clone();
     if let Some(found) = durable.and_then(|store| store.get(hash)) {
         return Some(found);
-    }
-    // Filesystem fallback, available only to standalone CLI builds.
-    #[cfg(feature = "cli-disk-tier")]
-    {
-        if let Some(found) = crate::cache::disk_tier::get(hash, ttl) {
-            return Some(found);
-        }
     }
     None
 }

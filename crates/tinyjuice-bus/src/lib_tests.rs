@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn the_contract_accepts_newer_minors_and_rejects_the_breaking_v2_contract() {
-    assert_eq!(CONTRACT_VERSION, (3, 0));
+    assert_eq!(CONTRACT_VERSION, (3, 1));
     assert!(is_compatible(CONTRACT_VERSION));
     assert!(is_compatible((3, 1)));
     assert!(
@@ -70,6 +70,39 @@ fn the_wire_envelopes_keep_their_json_contract() {
     assert_eq!(
         serde_json::to_string(&stats).unwrap(),
         r#"{"entries":2,"bytes":4096}"#
+    );
+}
+
+#[test]
+fn request_local_savings_import_address_is_a_transport_only_descriptor() {
+    use savings::{ImportSavingsAtRequest, SavingsAggregate, StorageCallbackAddress};
+
+    let request = ImportSavingsAtRequest {
+        aggregate: SavingsAggregate::default(),
+        callback: StorageCallbackAddress {
+            host: ":1.42".to_owned(),
+            object_root: "/ai/tinyhumans/tinystorage/Invocation/abc".to_owned(),
+        },
+    };
+    let encoded = serde_json::to_value(&request).unwrap();
+    assert_eq!(encoded["callback"]["host"], ":1.42");
+    assert_eq!(
+        encoded["callback"]["object_root"],
+        "/ai/tinyhumans/tinystorage/Invocation/abc"
+    );
+    let decoded: ImportSavingsAtRequest = serde_json::from_value(encoded.clone()).unwrap();
+    assert_eq!(decoded.callback.host, ":1.42");
+    assert_eq!(
+        decoded.callback.object_root,
+        "/ai/tinyhumans/tinystorage/Invocation/abc"
+    );
+    assert!(
+        serde_json::from_value::<ImportSavingsAtRequest>({
+            let mut value = encoded;
+            value["callback"]["write_condition"] = serde_json::json!("must-not-cross-the-bus");
+            value
+        })
+        .is_err()
     );
 }
 

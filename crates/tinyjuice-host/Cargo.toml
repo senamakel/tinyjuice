@@ -1,0 +1,23 @@
+[package]
+name = "tinyjuice-host"
+version = "0.11.0"
+edition = "2024"
+rust-version = "1.88"
+license = "GPL-3.0-only"
+description = "Host-side adapters for TinyJuice bus modules."
+repository = "https://github.com/tinyhumansai/tinyjuice"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+log = "0.4"
+serde_json = "1"
+tinyjuice-bus = { version = "0.11.0", path = "../tinyjuice-bus" }
+tinytools = { version = "0.6", git = "https://github.com/tinyhumansai/tinytools", rev = "3a01641f8ebd8a55656cd212f9a90638d958a447" }
+tokio = { version = "1", features = ["rt"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }

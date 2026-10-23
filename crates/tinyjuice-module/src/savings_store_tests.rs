@@ -1,7 +1,9 @@
 use super::*;
 use crate::storage::tests::rig;
 use tinyjuice_bus::savings::SavingsBucket;
-use tinystoragedrivers_core::{Scope, StorageBackend};
+use tinystoragedrivers_api::{DocumentStore, Storage, StorageBackend};
+use tinystoragedrivers_testkit::{Failing, FaultPlan};
+use tinystoragedrivers_types::{ErrorKind, Scope};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -18,7 +20,7 @@ fn req(original: u64, compacted: u64) -> RecordSavingsRequest {
 async fn stored(
     rig: &crate::storage::tests::Rig,
 ) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error>> {
-    let docs = Arc::clone(rig.backend.for_scope(&Scope::local())?.documents());
+    let docs = Arc::clone(rig.backend.for_scope(&Scope::new("local")?)?.documents());
     Ok(docs
         .get(SAVINGS_COLLECTION, SAVINGS_DOC_ID)
         .await?
@@ -156,102 +158,18 @@ async fn a_host_without_storage_is_not_asked_again_within_the_cooldown() -> Test
     Ok(())
 }
 
-/// The real document store, except that writes fail while `fail_puts` is set.
-#[derive(Debug)]
-struct FlakyDocs {
-    inner: Arc<dyn DocumentStore>,
-    fail_puts: std::sync::atomic::AtomicBool,
-}
-
-#[tinystoragedrivers_core::async_trait]
-impl DocumentStore for FlakyDocs {
-    fn capabilities(&self) -> tinystoragedrivers_core::Capabilities {
-        self.inner.capabilities()
-    }
-    async fn ensure_collection(
-        &self,
-        spec: &tinystoragedrivers_core::CollectionSpec,
-    ) -> tinystoragedrivers_core::Result<()> {
-        self.inner.ensure_collection(spec).await
-    }
-    async fn get(
-        &self,
-        collection: &str,
-        id: &str,
-    ) -> tinystoragedrivers_core::Result<
-        Option<tinystoragedrivers_core::Versioned<serde_json::Value>>,
-    > {
-        self.inner.get(collection, id).await
-    }
-    async fn put(
-        &self,
-        collection: &str,
-        id: &str,
-        doc: serde_json::Value,
-        precondition: Precondition,
-    ) -> tinystoragedrivers_core::Result<tinystoragedrivers_core::Version> {
-        if self.fail_puts.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(tinystoragedrivers_core::StorageError::unavailable(
-                "writes are down",
-            ));
-        }
-        self.inner.put(collection, id, doc, precondition).await
-    }
-    async fn delete(
-        &self,
-        collection: &str,
-        id: &str,
-        precondition: Precondition,
-    ) -> tinystoragedrivers_core::Result<bool> {
-        self.inner.delete(collection, id, precondition).await
-    }
-    async fn query(
-        &self,
-        collection: &str,
-        query: &tinystoragedrivers_core::Query,
-    ) -> tinystoragedrivers_core::Result<
-        tinystoragedrivers_core::Page<tinystoragedrivers_core::Versioned<serde_json::Value>>,
-    > {
-        self.inner.query(collection, query).await
-    }
-    async fn count(
-        &self,
-        collection: &str,
-        filter: &tinystoragedrivers_core::Filter,
-    ) -> tinystoragedrivers_core::Result<u64> {
-        self.inner.count(collection, filter).await
-    }
-    async fn delete_where(
-        &self,
-        collection: &str,
-        filter: &tinystoragedrivers_core::Filter,
-    ) -> tinystoragedrivers_core::Result<u64> {
-        self.inner.delete_where(collection, filter).await
-    }
-    async fn claim(
-        &self,
-        collection: &str,
-        filter: &tinystoragedrivers_core::Filter,
-        sort: &[tinystoragedrivers_core::Sort],
-        patch: &serde_json::Value,
-    ) -> tinystoragedrivers_core::Result<
-        Option<tinystoragedrivers_core::Versioned<serde_json::Value>>,
-    > {
-        self.inner.claim(collection, filter, sort, patch).await
-    }
-    async fn drop_collection(&self, collection: &str) -> tinystoragedrivers_core::Result<()> {
-        self.inner.drop_collection(collection).await
-    }
-}
-
 #[tokio::test]
 async fn an_import_whose_write_fails_is_an_error_leaves_totals_alone_and_can_retry() {
-    let backend = tinystoragedrivers_core::MemoryStorage::new();
-    let inner = Arc::clone(backend.for_scope(&Scope::local()).unwrap().documents());
-    let flaky = Arc::new(FlakyDocs {
-        inner,
-        fail_puts: std::sync::atomic::AtomicBool::new(true),
-    });
+    let backend = tinystoragedrivers_testkit::memory_backend();
+    let inner = Arc::clone(
+        backend
+            .for_scope(&Scope::new("local").unwrap())
+            .unwrap()
+            .documents(),
+    );
+    let faults = FaultPlan::new();
+    faults.fail_operation_nth("documents.put", 1, ErrorKind::Unavailable);
+    let flaky = Arc::new(Failing::with_plan(inner, faults));
     let savings = Savings::new();
     {
         let mut state = savings.state.lock().await;
@@ -277,11 +195,226 @@ async fn an_import_whose_write_fails_is_an_error_leaves_totals_alone_and_can_ret
         "totals roll back"
     );
 
-    flaky
-        .fail_puts
-        .store(false, std::sync::atomic::Ordering::SeqCst);
     assert!(savings.import(None, legacy).await.unwrap());
     assert_eq!(savings.stats(None).await.total.tokens_saved, 20);
     let stored = flaky.get(SAVINGS_COLLECTION, SAVINGS_DOC_ID).await.unwrap();
     assert_eq!(stored.unwrap().doc["total"]["events"], 3);
+}
+
+#[tokio::test]
+async fn request_local_import_refusal_leaves_the_cached_ledger_unchanged() {
+    let backend = tinystoragedrivers_testkit::memory_backend();
+    let ordinary = backend.for_scope(&Scope::new("ordinary").unwrap()).unwrap();
+    let callback = backend.for_scope(&Scope::new("callback").unwrap()).unwrap();
+    let faults = FaultPlan::new();
+    faults.fail_operation_nth("documents.put", 1, ErrorKind::Unavailable);
+    let callback_docs = Arc::new(Failing::with_plan(Arc::clone(callback.documents()), faults));
+    let callback_storage = tinystoragedrivers_api::Storage::new(
+        callback_docs.clone(),
+        Arc::clone(callback.streams()),
+        Arc::clone(callback.kv()),
+        Arc::clone(callback.blobs()),
+        Arc::clone(callback.queues()),
+        Arc::clone(callback.secrets()),
+    );
+    let savings = Savings::new();
+    {
+        let mut state = savings.state.lock().await;
+        state.docs = Some(Arc::clone(ordinary.documents()));
+        state.loaded = true;
+    }
+    let legacy = SavingsAggregate {
+        total: SavingsBucket {
+            events: 3,
+            original_tokens: 30,
+            compacted_tokens: 10,
+            tokens_saved: 20,
+            cost_saved_usd: 0.1,
+        },
+        ..Default::default()
+    };
+
+    let failed = savings.import_at(None, &callback_storage, legacy).await;
+    assert!(failed.is_err());
+    assert_eq!(savings.stats(None).await.total.events, 0);
+    assert!(
+        ordinary
+            .documents()
+            .get(SAVINGS_COLLECTION, SAVINGS_DOC_ID)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        callback
+            .documents()
+            .get(SAVINGS_COLLECTION, SAVINGS_DOC_ID)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn request_local_import_uses_the_call_storage_without_caching_it() {
+    let backend = tinystoragedrivers_testkit::memory_backend();
+    let ordinary = backend.for_scope(&Scope::new("local").unwrap()).unwrap();
+    let ordinary_docs = Arc::clone(ordinary.documents());
+    let callback_docs = Arc::new(Failing::with_plan(
+        Arc::clone(&ordinary_docs),
+        FaultPlan::new(),
+    ));
+    let callback_storage = tinystoragedrivers_api::Storage::new(
+        callback_docs,
+        Arc::clone(ordinary.streams()),
+        Arc::clone(ordinary.kv()),
+        Arc::clone(ordinary.blobs()),
+        Arc::clone(ordinary.queues()),
+        Arc::clone(ordinary.secrets()),
+    );
+    let savings = Savings::new();
+    {
+        let mut state = savings.state.lock().await;
+        state.docs = Some(Arc::clone(&ordinary_docs));
+        state.loaded = true;
+    }
+    let legacy = SavingsAggregate {
+        total: SavingsBucket {
+            events: 2,
+            original_tokens: 18,
+            compacted_tokens: 8,
+            tokens_saved: 10,
+            cost_saved_usd: 0.25,
+        },
+        ..Default::default()
+    };
+
+    assert!(
+        savings
+            .import_at(None, &callback_storage, legacy)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        ordinary_docs
+            .get(SAVINGS_COLLECTION, SAVINGS_DOC_ID)
+            .await
+            .unwrap()
+            .unwrap()
+            .doc["total"]["tokens_saved"],
+        10
+    );
+    assert_eq!(savings.stats(None).await.total.events, 2);
+    let state = savings.state.lock().await;
+    assert!(Arc::ptr_eq(
+        state.docs.as_ref().expect("ordinary port remains cached"),
+        &ordinary_docs,
+    ));
+}
+
+#[tokio::test]
+async fn request_local_import_works_without_an_ordinary_storage_port() -> TestResult {
+    let rig = rig(false).await?;
+    let callback = tinystoragedrivers_testkit::memory_backend();
+    let callback = callback.for_scope(&Scope::new("callback")?)?;
+    let callback_storage = Storage::new(
+        Arc::clone(callback.documents()),
+        Arc::clone(callback.streams()),
+        Arc::clone(callback.kv()),
+        Arc::clone(callback.blobs()),
+        Arc::clone(callback.queues()),
+        Arc::clone(callback.secrets()),
+    );
+    let savings = Savings::new();
+    let legacy = SavingsAggregate {
+        total: SavingsBucket {
+            events: 2,
+            original_tokens: 20,
+            compacted_tokens: 10,
+            tokens_saved: 10,
+            cost_saved_usd: 0.1,
+        },
+        ..Default::default()
+    };
+
+    assert!(savings.import_at(None, &callback_storage, legacy).await?);
+    assert_eq!(savings.stats(Some(&rig.module)).await.total.events, 0);
+    assert_eq!(
+        callback_storage
+            .documents()
+            .get_as::<StoredSavings>(SAVINGS_COLLECTION, SAVINGS_DOC_ID)
+            .await?
+            .unwrap()
+            .doc
+            .total
+            .events,
+        2
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn request_local_import_uses_callback_destination_when_ordinary_totals_exist() -> TestResult {
+    let backend = tinystoragedrivers_testkit::memory_backend();
+    let ordinary = backend.for_scope(&Scope::new("ordinary")?)?;
+    let callback = backend.for_scope(&Scope::new("callback")?)?;
+    let savings = Savings::new();
+    let ordinary_totals = SavingsAggregate {
+        total: SavingsBucket {
+            events: 1,
+            original_tokens: 9,
+            compacted_tokens: 4,
+            tokens_saved: 5,
+            cost_saved_usd: 0.1,
+        },
+        ..Default::default()
+    };
+    ordinary
+        .documents()
+        .put_as(
+            SAVINGS_COLLECTION,
+            SAVINGS_DOC_ID,
+            &StoredSavings::from_aggregate(&ordinary_totals, now_ms()),
+            Precondition::Absent,
+        )
+        .await?;
+    {
+        let mut state = savings.state.lock().await;
+        state.docs = Some(Arc::clone(ordinary.documents()));
+        state.loaded = true;
+        savings.ledger.replace(ordinary_totals.clone());
+    }
+    let callback_storage = Storage::new(
+        Arc::clone(callback.documents()),
+        Arc::clone(callback.streams()),
+        Arc::clone(callback.kv()),
+        Arc::clone(callback.blobs()),
+        Arc::clone(callback.queues()),
+        Arc::clone(callback.secrets()),
+    );
+    let legacy = SavingsAggregate {
+        total: SavingsBucket {
+            events: 2,
+            original_tokens: 20,
+            compacted_tokens: 10,
+            tokens_saved: 10,
+            cost_saved_usd: 0.1,
+        },
+        ..Default::default()
+    };
+
+    assert!(savings.import_at(None, &callback_storage, legacy).await?);
+    assert_eq!(
+        callback_storage
+            .documents()
+            .get_as::<StoredSavings>(SAVINGS_COLLECTION, SAVINGS_DOC_ID)
+            .await?
+            .unwrap()
+            .doc
+            .total
+            .events,
+        2
+    );
+    assert_eq!(savings.stats(None).await.total.events, 1);
+    Ok(())
 }

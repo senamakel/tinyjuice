@@ -1,6 +1,7 @@
 //! End-to-end proof that the built TinyJuice cdylib is admitted and serves
 //! compression and CCR retrieval through a real TinyBus broker.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use tinybus::Connection;
@@ -9,6 +10,10 @@ use tinybus::test_support::{admit_module, start_bus, wait_until_serving};
 use tinyjuice::types::{AgentTokenjuiceCompression, CompressedOutput, ContentHint, ContentKind};
 use tinyjuice_bus::wire::CompactResponse;
 use tinyjuice_module::{BUS_NAME, OBJECT_PATH};
+use tinystoragedrivers_api::{BlobStore, StorageBackend};
+use tinystoragedrivers_busproxy::{PerCallerEndpoint, StorageServer, serve};
+use tinystoragedrivers_testkit::MemoryBackend;
+use tinystoragedrivers_types::Scope;
 
 const EXPECTED_METHODS: &[&str] = tinyjuice_bus::METHODS;
 
@@ -16,6 +21,16 @@ const EXPECTED_METHODS: &[&str] = tinyjuice_bus::METHODS;
 #[ignore = "requires TINYJUICE_TEST_MODULE to point at the built cdylib"]
 async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
     let (modules, client, broker_task) = start_bus().await.expect("memory bus should start");
+    let storage_backend = Arc::new(MemoryBackend::new());
+    let endpoint_backend = Arc::clone(&storage_backend);
+    let storage_endpoint = PerCallerEndpoint::new(move |_sender| {
+        let scope = Scope::new("tinyjuice-module-test").ok()?;
+        let storage = endpoint_backend.for_scope(&scope).ok()?;
+        Some(StorageServer::new(storage))
+    });
+    let _served_storage = serve(&client, Arc::new(storage_endpoint))
+        .await
+        .expect("host storage should be served before module setup");
     let loaded = admit_module(&modules, "TINYJUICE_TEST_MODULE", "tinyjuice-module")
         .expect("module should load");
     assert_eq!(loaded.name, "tinyjuice-module");
@@ -56,10 +71,10 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
                     "codeTargetRatio": null,
                     "charsPerToken": 4.0
                 },
-                "maxCacheEntries": 8,
+                "maxCacheEntries": 1,
                 "maxCacheBytes": 1048576,
                 "ccrTtlSecs": null,
-                "ccrDurable": false
+                "ccrDurable": true
             }),),
         )
         .await
@@ -116,6 +131,33 @@ async fn the_built_module_compresses_and_recovers_over_a_real_broker() {
         .expect("compress should succeed");
     assert!(output.applied);
     let token = output.ccr_token.expect("compression should be recoverable");
+
+    let scope = Scope::new("tinyjuice-module-test").expect("valid test scope");
+    let host_blobs: Arc<dyn BlobStore> =
+        Arc::clone(storage_backend.for_scope(&scope).unwrap().blobs());
+    let durable_key = format!("{}/{}", tinyjuice_drivers::CCR_PREFIX, token);
+    let durable_blob = host_blobs
+        .get(&durable_key)
+        .await
+        .expect("host blob lookup should succeed")
+        .expect("the module should write its CCR original to host storage");
+    assert_eq!(durable_blob.bytes, content.as_bytes());
+
+    // A second distinct retained original evicts the first from the one-entry
+    // module cache. Retrieval below must therefore use the host BlobStore.
+    let eviction_content = (0..200)
+        .map(|index| format!("WARN independent request queued id={index}\n"))
+        .collect::<String>();
+    let eviction_output: CompressedOutput = proxy
+        .call(
+            "Compress",
+            (eviction_content, serde_json::json!({ "explicit": "log" })),
+        )
+        .await
+        .expect("second compression should succeed");
+    assert!(eviction_output.applied);
+    assert!(eviction_output.ccr_token.is_some());
+
     let recovered: Option<String> = proxy
         .call(
             "Retrieve",

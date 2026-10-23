@@ -51,7 +51,7 @@ pub fn repl_tool_declarations() -> Vec<ReplToolDeclaration> {
                 "ignore_case": { "type": "boolean" },
                 "context": { "type": "integer" },
                 "top_k": { "type": "integer" },
-                "scope": { "type": "string", "description": "python slice, e.g. [:-100]" },
+                "scope": { "type": "string" },
                 "unit": { "type": "string", "enum": ["lines", "chars"] }
             }),
             &["query"],
@@ -94,25 +94,34 @@ pub fn summary_focus_property() -> Value {
     })
 }
 
-/// Description of the existing retrieval tool.
-pub const RETRIEVE_TOOL_DESCRIPTION: &str = "Retrieve the full, original text of a tool result that was compacted to \
-         save context. When a tool output shows a marker like \
-         `retrieve_tool_output(\"a1b2c3d4e5f6\")`, call this with that hash to get \
-         the complete original back. Use it only when you actually need the dropped \
-         detail — the compacted view is usually enough.";
+/// Description of the current recovery tool declaration.
+pub const RETRIEVE_TOOL_DESCRIPTION: &str = "Return the whole original of a compacted or stored tool output, or a `range` \
+         of its lines or bytes. Pass the token its footer names (or the hash in a \
+         `⟦tj:…⟧` marker). To read or search only part of it, use juice_find with \
+         the same value as `handle` when that tool is offered.";
 
-/// Existing retrieval tool argument schema.
+/// Current retrieval tool argument schema.
 #[must_use]
 pub fn retrieve_tool_parameters() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "hash": {
+            "token": {
                 "type": "string",
-                "description": "The hash from a retrieve_tool_output(\"…\") marker."
+                "description": "The token named in the output's footer (or a ⟦tj:…⟧ marker's hash)."
+            },
+            "range": {
+                "type": "object",
+                "description": "Optional slice of the original to return.",
+                "properties": {
+                    "start": { "type": "integer", "minimum": 0 },
+                    "end": { "type": "integer", "minimum": 0 },
+                    "unit": { "type": "string", "enum": ["bytes", "lines"] }
+                },
+                "required": ["start", "end"]
             }
         },
-        "required": ["hash"]
+        "required": ["token"]
     })
 }
 

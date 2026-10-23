@@ -1854,7 +1854,7 @@ dependencies = [
  "async-trait",
  "serde",
  "serde_json",
- "tinytools",
+ "tinytools 0.5.0",
  "toml",
  "tracing",
 ]
@@ -1884,7 +1884,7 @@ dependencies = [
  "tinyinference-embeddings",
  "tinyinference-llm",
  "tinystoragedrivers-core",
- "tinytools",
+ "tinytools 0.5.0",
  "tinytools-agent",
  "tokio",
  "tracing",
@@ -1974,7 +1974,7 @@ dependencies = [
  "sha2 0.11.0",
  "thiserror",
  "tinyjuice-bus",
- "tinytools",
+ "tinytools 0.6.0",
  "tokio",
  "tree-sitter",
  "tree-sitter-python",
@@ -1991,6 +1991,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tinystoragedrivers-types",
 ]
 
 [[package]]
@@ -2003,7 +2004,7 @@ dependencies = [
  "tinyagents-harness",
  "tinyinference-llm",
  "tinyjuice",
- "tinytools",
+ "tinytools 0.5.0",
  "tokio",
 ]
 
@@ -2047,6 +2048,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinystoragedrivers-types"
+version = "2.1.0"
+source = "git+https://github.com/tinyhumansai/tinystoragedrivers?rev=05eaada962decbab33bafa4763d2bd1a67f6b456#05eaada962decbab33bafa4763d2bd1a67f6b456"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "tinystr"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2067,13 +2078,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinytools"
+version = "0.6.0"
+source = "git+https://github.com/tinyhumansai/tinytools?rev=3a01641f8ebd8a55656cd212f9a90638d958a447#3a01641f8ebd8a55656cd212f9a90638d958a447"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "tinytools-agent"
 version = "0.6.0"
 dependencies = [
  "regex",
  "serde",
  "serde_json",
- "tinytools",
+ "tinytools 0.5.0",
 ]
 
 [[package]]

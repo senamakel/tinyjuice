@@ -1,0 +1,34 @@
+[package]
+name = "tinyjuice-cli"
+version = "0.11.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+license = "GPL-3.0-only"
+description = "Standalone TinyJuice command-line tools."
+repository = "https://github.com/tinyhumansai/tinyjuice"
+
+[dependencies]
+tinyjuice = { path = "../.." }
+tinyjuice-drivers = { path = "../tinyjuice-drivers" }
+tinystoragedrivers = { version = "2.1.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456", features = ["file"] }
+tinystoragedrivers-api = { version = "2.1.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456" }
+tinystoragedrivers-types = { version = "2.1.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456" }
+dirs = "7"
+log = "0.4"
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[dev-dependencies]
+async-trait = "0.1"
+tempfile = "3"
+tinystoragedrivers-testkit = { version = "2.1.0", git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456" }
+
+[[bin]]
+name = "tinyjuice"
+path = "src/bin/tinyjuice.rs"
+doc = false
+
+[[bin]]
+name = "tinyjuice-reduce"
+path = "src/bin/tinyjuice-reduce.rs"

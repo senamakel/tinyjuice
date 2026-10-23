@@ -39,6 +39,9 @@ the strict lossless-or-recoverable guarantee (e.g. coding agents on the
 - **OpenHuman-ready boundary** - the core crate avoids OpenHuman runtime
   dependencies; adapters install configuration, ML callbacks, and savings
   recorders from the host side.
+- **Separate host adapters** - `tinyjuice-host` supplies the bus-backed
+  retrieval and REPL tools, turn-bound `MlHost.Generate` tickets, recovery
+  helpers, and summary-focus utilities without linking the compression engine.
 - **No raw-content analytics requirement** - the dashboard consumes metadata,
   token and byte counts, latency, status, and strategy labels, not prompt text.
 
@@ -46,6 +49,11 @@ TinyJuice is designed for the work agents actually do: reading too much,
 searching broadly, running noisy commands, and needing a compact but reversible
 view that keeps failures, anomalies, changed hunks, signatures, and matching
 lines visible.
+
+Hosts use `tinyjuice-bus` for its wire contract and the separate
+`tinyjuice-host` crate for tool adapters. The host crate accepts callbacks for
+module queries and recovery lookups, so the caller retains runtime, workspace,
+and authorization ownership.
 
 ## How It Works
 
@@ -222,25 +230,25 @@ tool-output adapter leaves the output unchanged and reports
 Install the CLI:
 
 ```sh
-cargo install tinyjuice --features cli-disk-tier --locked
+cargo install --path crates/tinyjuice-cli --locked --bin tinyjuice
 ```
 
 Run the minimal reducer CLI:
 
 ```sh
-cargo run --features cli-disk-tier --bin tinyjuice-reduce -- reduce --tool-name bash --command "git status" status.txt
-cargo run --features cli-disk-tier --bin tinyjuice-reduce -- reduce-json payload.json
-cargo run --features cli-disk-tier --bin tinyjuice-reduce -- verify --rules --fixtures
-cargo run --features cli-disk-tier --bin tinyjuice-reduce -- discover executions.ndjson
-cargo run --features cli-disk-tier --bin tinyjuice-reduce -- wrap -- cargo test
-cargo run --features cli-disk-tier --bin tinyjuice-reduce -- ls --store-dir .tokenjuice/ccr
-cargo run --features cli-disk-tier --bin tinyjuice-reduce -- cat --store-dir .tokenjuice/ccr <token>
-cargo run --features cli-disk-tier --bin tinyjuice-reduce -- stats --store-dir .tokenjuice/ccr
-cargo run --features cli-disk-tier --bin tinyjuice-reduce -- doctor --store-dir .tokenjuice/ccr
-cargo run --features cli-disk-tier --bin tinyjuice-reduce -- doctor codex
-cargo run --features cli-disk-tier --bin tinyjuice-reduce -- doctor hooks
-cargo run --features cli-disk-tier --bin tinyjuice-reduce -- install codex --local target/debug/tinyjuice
-cargo run --features cli-disk-tier --bin tinyjuice-reduce -- uninstall codex
+cargo run --manifest-path crates/tinyjuice-cli/Cargo.toml --bin tinyjuice-reduce -- reduce --tool-name bash --command "git status" status.txt
+cargo run --manifest-path crates/tinyjuice-cli/Cargo.toml --bin tinyjuice-reduce -- reduce-json payload.json
+cargo run --manifest-path crates/tinyjuice-cli/Cargo.toml --bin tinyjuice-reduce -- verify --rules --fixtures
+cargo run --manifest-path crates/tinyjuice-cli/Cargo.toml --bin tinyjuice-reduce -- discover executions.ndjson
+cargo run --manifest-path crates/tinyjuice-cli/Cargo.toml --bin tinyjuice-reduce -- wrap -- cargo test
+cargo run --manifest-path crates/tinyjuice-cli/Cargo.toml --bin tinyjuice-reduce -- ls --store-dir .tokenjuice/ccr
+cargo run --manifest-path crates/tinyjuice-cli/Cargo.toml --bin tinyjuice-reduce -- cat --store-dir .tokenjuice/ccr <token>
+cargo run --manifest-path crates/tinyjuice-cli/Cargo.toml --bin tinyjuice-reduce -- stats --store-dir .tokenjuice/ccr
+cargo run --manifest-path crates/tinyjuice-cli/Cargo.toml --bin tinyjuice-reduce -- doctor --store-dir .tokenjuice/ccr
+cargo run --manifest-path crates/tinyjuice-cli/Cargo.toml --bin tinyjuice-reduce -- doctor codex
+cargo run --manifest-path crates/tinyjuice-cli/Cargo.toml --bin tinyjuice-reduce -- doctor hooks
+cargo run --manifest-path crates/tinyjuice-cli/Cargo.toml --bin tinyjuice-reduce -- install codex --local target/debug/tinyjuice
+cargo run --manifest-path crates/tinyjuice-cli/Cargo.toml --bin tinyjuice-reduce -- uninstall codex
 ```
 
 Run hot-path benchmarks:
@@ -272,18 +280,17 @@ helpers still use the process-global `GlobalCcrStore` for compatibility. New
 tests and host adapters can use `MemoryCcrStore` to assert CCR behavior without
 touching the global cache.
 
-The standalone CLI's `ls`, `cat`, `stats`, and `gc` commands are compiled with
-the opt-in `cli-disk-tier` feature; `ls`, `cat`, and `stats` can inspect an
-explicit directory with `--store-dir`. `gc` and normal CLI or hook compression
-runs use `TINYJUICE_CCR_DIR`, falling back to the platform cache directory.
-Library and hosted module builds do not contain this tier. It is a disposable
-recovery cache, not durable user data. Hosted persistence is owned by the host's
-BlobCcrStore. Existing standalone cache files are not imported into hosted
-storage. The REPL's former `repl_save_dir` text snapshots are no longer written;
-the CCR token and its configured store are authoritative. TinyBus contract 3.0
-rejects 2.x hosts because the old disk-path request cannot express host
-durability. These commands do not imply access to another process's in-memory
-cache. `cat` supports
+The standalone CLI lives in the separate `tinyjuice-cli` package and uses a
+host-composed file blob store for `ls`, `cat`, `stats`, and `gc`; the library
+and hosted module contain no file-backed persistence tier. These commands can
+inspect an explicit directory with `--store-dir`, while normal CLI and hook
+compression runs use `TINYJUICE_CCR_DIR` or the platform cache directory. It is
+a disposable recovery cache, not durable user data. Hosted persistence is
+owned by the host's BlobCcrStore. Existing standalone cache files are imported
+by the CLI into its configured store. The REPL's former `repl_save_dir` text
+snapshots are no longer written; the CCR token and its configured store are
+authoritative. These commands do not imply access to another process's
+in-memory cache. `cat` supports
 `--lines START:END` and `--bytes START:END` ranges.
 `stats` reports metadata-only counts and byte totals without reading token
 content.

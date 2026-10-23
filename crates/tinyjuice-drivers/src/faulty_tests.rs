@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tinystoragedrivers_core::{Blob, BlobMeta, BlobStore, Capabilities, Result, StorageError};
+use tinystoragedrivers_api::BlobStore;
+use tinystoragedrivers_types::{Blob, BlobMeta, Capabilities, Result, StorageError};
 
 /// Wraps a real handle; `fail` makes every call error, `ttl` toggles whether
 /// it claims `BlobTtl`.
@@ -29,6 +30,9 @@ impl Faulty {
 
 #[async_trait]
 impl BlobStore for Faulty {
+    fn max_key_len(&self) -> usize {
+        self.inner.max_key_len()
+    }
     async fn put(&self, key: &str, bytes: Vec<u8>, ct: Option<&str>) -> Result<BlobMeta> {
         self.check()?;
         self.inner.put(key, bytes, ct).await

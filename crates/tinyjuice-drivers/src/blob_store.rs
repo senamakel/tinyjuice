@@ -4,7 +4,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tinyjuice::cache::store::{CcrPutResult, CcrStore, RangeUnit, range_from_original, short_hash};
-use tinystoragedrivers_core::{BlobStore, Blocking, Capability, StorageError};
+use tinystoragedrivers_api::BlobStore;
+use tinystoragedrivers_types::{Capability, StorageError};
+
+use crate::blocking::Blocking;
 
 pub use tinyjuice_bus::storage::CCR_PREFIX;
 
