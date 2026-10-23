@@ -138,6 +138,31 @@ fn memory_store_rejects_oversized_originals() {
 }
 
 #[test]
+fn an_oversized_original_does_not_evict_the_retained_ones() {
+    let mut inner = Inner::default();
+    inner.insert("a".into(), "x".repeat(40), 100, 100);
+    inner.insert("b".into(), "y".repeat(40), 100, 100);
+    assert!(!inner.insert("big".into(), "z".repeat(200), 100, 100));
+    assert!(inner.map.contains_key("a") && inner.map.contains_key("b"));
+    assert_eq!(inner.total_bytes, 80);
+
+    let store = MemoryCcrStore::new(10, 64);
+    let kept = store.put("kept isolated payload foxtrot");
+    assert!(!store.put(&"oversized payload golf ".repeat(20)).retained());
+    assert_eq!(
+        store.get(kept.token()).as_deref(),
+        Some("kept isolated payload foxtrot")
+    );
+}
+
+#[test]
+fn the_entry_cap_never_evicts_the_original_just_inserted() {
+    let mut inner = Inner::default();
+    assert!(inner.insert("only".into(), "x".repeat(10), 0, 100));
+    assert!(inner.map.contains_key("only"));
+}
+
+#[test]
 fn memory_store_rejects_malformed_tokens() {
     let store = MemoryCcrStore::new(10, 10_000);
 

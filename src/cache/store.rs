@@ -225,7 +225,12 @@ impl Inner {
             self.order.push_back(hash);
             return true;
         }
+        // An original larger than the whole byte cap can never be kept; refuse
+        // it before inserting, so it cannot evict every retained original.
         let bytes = content.len();
+        if bytes > max_bytes {
+            return false;
+        }
         self.total_bytes += bytes;
         self.map.insert(
             hash.clone(),
@@ -236,11 +241,9 @@ impl Inner {
         );
         self.order.push_back(hash.clone());
         while self.order.len() > max_entries || self.total_bytes > max_bytes {
-            // Never evict the entry we just inserted to satisfy the cap when it
-            // is the only thing keeping us over: that would make the original
-            // unrecoverable the instant its footer is emitted. Stop and report
-            // non-retention instead (one oversized item is rejected, not the
-            // whole store wiped).
+            // Never evict the entry we just inserted: that would make the
+            // original unrecoverable the instant its footer is emitted. It fits
+            // the byte cap on its own (checked above).
             if self.order.len() == 1 {
                 break;
             }
@@ -250,15 +253,6 @@ impl Inner {
             if let Some(e) = self.map.remove(&evicted) {
                 self.total_bytes = self.total_bytes.saturating_sub(e.content.len());
             }
-        }
-        // Retained iff still present (an oversized single entry over the byte
-        // cap is dropped below) AND within the byte cap.
-        if self.total_bytes > max_bytes {
-            if let Some(e) = self.map.remove(&hash) {
-                self.total_bytes = self.total_bytes.saturating_sub(e.content.len());
-            }
-            self.order.retain(|h| h != &hash);
-            return false;
         }
         self.map.contains_key(&hash)
     }
