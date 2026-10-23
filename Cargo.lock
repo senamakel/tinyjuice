@@ -2347,9 +2347,9 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "tinybus-module"
-version = "0.1.6"
-
-[[patch.unused]]
 name = "tinytools"
 version = "0.5.0"
+
+[[patch.unused]]
+name = "tinybus-module"
+version = "0.1.6"
