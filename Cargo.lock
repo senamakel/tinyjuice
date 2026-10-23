@@ -1760,7 +1760,6 @@ dependencies = [
 [[package]]
 name = "tinytools"
 version = "0.6.0"
-source = "git+https://github.com/tinyhumansai/tinytools?rev=3a01641f8ebd8a55656cd212f9a90638d958a447#3a01641f8ebd8a55656cd212f9a90638d958a447"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2345,10 +2344,6 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "tinytools"
-version = "0.5.0"
 
 [[patch.unused]]
 name = "tinybus-module"
