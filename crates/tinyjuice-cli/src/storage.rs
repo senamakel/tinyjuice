@@ -54,7 +54,13 @@ fn configure_with_report(
     ttl: Option<Duration>,
     max_bytes: Option<u64>,
 ) -> Result<ConfigureReport, String> {
-    std::fs::create_dir_all(root).map_err(|error| {
+    // Originals are raw tool output: a directory created here is owner-only.
+    // An existing directory (possibly user-chosen) keeps its mode.
+    let mut dir = std::fs::DirBuilder::new();
+    dir.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut dir, 0o700);
+    dir.create(root).map_err(|error| {
         format!(
             "cannot create CCR storage directory {}: {error}",
             root.display()

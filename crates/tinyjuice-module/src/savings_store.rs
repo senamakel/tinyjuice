@@ -180,15 +180,27 @@ impl Savings {
         let Some(docs) = state.docs.as_ref() else {
             return;
         };
-        let stored = match docs
-            .get_as::<StoredSavings>(SAVINGS_COLLECTION, SAVINGS_DOC_ID)
-            .await
-        {
-            Ok(found) => found.map(|found| found.doc.into_aggregate()),
+        // Any failure of the read itself (including a Serialization-kind one
+        // from a malformed bus reply) leaves the ledger unloaded, so nothing
+        // overwrites the stored totals unseen.
+        let found = match docs.get(SAVINGS_COLLECTION, SAVINGS_DOC_ID).await {
+            Ok(found) => found,
             Err(error) => {
                 log::warn!("[tinyjuice_module][savings] load failed, retrying later: {error}");
                 return;
             }
+        };
+        let stored = match found.map(|found| serde_json::from_value::<StoredSavings>(found.doc)) {
+            Some(Ok(doc)) => Some(doc.into_aggregate()),
+            // A document that can never decode would block every later write;
+            // treat it as absent so the next persist replaces it.
+            Some(Err(error)) => {
+                log::warn!(
+                    "[tinyjuice_module][savings] stored totals undecodable, replacing: {error}"
+                );
+                None
+            }
+            None => None,
         };
         if let Some(stored) = stored.filter(|_| !state.reset_early) {
             let early = state.dirty.then(|| self.ledger.stats());

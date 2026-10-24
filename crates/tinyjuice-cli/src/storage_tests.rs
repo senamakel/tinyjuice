@@ -242,6 +242,17 @@ fn collection_removes_and_reports_non_utf8_legacy_entries() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn configuration_makes_the_storage_directory_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("ccr");
+    configure_with_report(&root, None, None).unwrap();
+    let mode = std::fs::metadata(&root).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o700);
+}
+
 #[test]
 fn startup_prunes_expired_blobs_with_ttl_without_a_byte_cap() {
     let dir = tempfile::tempdir().unwrap();
